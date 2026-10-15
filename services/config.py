@@ -683,6 +683,23 @@ class ConfigStore:
             or ""
         ).strip().rstrip("/")
 
+    def _config_file_value(self, key: str) -> str:
+        return str(read_json_object(self.path, name="config.json").get(key) or "").strip()
+
+    @property
+    def sentinel_solver_url(self) -> str:
+        return str(
+            os.getenv("CHATGPT2API_SENTINEL_SOLVER_URL")
+            or self._config_file_value("sentinel_solver_url")
+        ).strip().rstrip("/")
+
+    @property
+    def sentinel_solver_key(self) -> str:
+        return str(
+            os.getenv("CHATGPT2API_SENTINEL_SOLVER_KEY")
+            or self._config_file_value("sentinel_solver_key")
+        ).strip()
+
     @property
     def app_version(self) -> str:
         try:
@@ -726,6 +743,8 @@ class ConfigStore:
             data["fallback_proxy"] = self.get_proxy_fallback_settings()
             data["third_party_apps"] = self.get_third_party_apps_settings()
             data.pop("basic", None)
+            data.pop("sentinel_solver_url", None)
+            data.pop("sentinel_solver_key", None)
             return data
 
     def get_proxy_settings(self) -> str:
@@ -782,6 +801,8 @@ class ConfigStore:
             updates = dict(data or {})
             updates.pop("auth-key", None)
             updates.pop("basic", None)
+            updates.pop("sentinel_solver_url", None)
+            updates.pop("sentinel_solver_key", None)
             proxy_keys = {"proxy", "fallback_proxy", "proxy_profiles", "proxy_groups"}
             if proxy_keys.intersection(updates):
                 raise ValueError("proxy configuration must be updated through ProxyManagementService")

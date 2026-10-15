@@ -719,6 +719,27 @@ export const accountsApi = {
     }
   },
 
+  importRefreshTokenDelivery: async (text: string, options: AccountImportOptions = {}) => {
+    const response = await apiClient.post<
+      { text: string; target_group_id: string | null },
+      AccountMutationResponse
+    >('/api/accounts/import-refresh-token-delivery', {
+      text,
+      target_group_id: options.targetGroupId ?? null,
+    })
+    return {
+      status: 'ok',
+      added: Number(response.added || 0),
+      skipped: Number(response.skipped || 0),
+      synced: Number(response.synced || 0),
+      updated_ids: response.updated_ids || [],
+      removed_ids: response.removed_ids || [],
+      errors: mutationErrorTexts(response.errors),
+      events: response.events || [],
+      progress: mutationProgress(response, Math.max(0, Number(response.updated || 0) + Number(response.removed || 0))),
+    }
+  },
+
   importTokens: (tokens: string[], sourceType: AccountSourceType) =>
     accountsApi.importAccounts(
       uniqueStrings(tokens).map((accessToken) => ({ access_token: accessToken, source_type: sourceType })),

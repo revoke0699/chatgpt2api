@@ -79,6 +79,11 @@ class AccountSelectionPreviewRequest(BaseModel):
     selection: AccountSelectionScope
 
 
+class RefreshTokenDeliveryImportRequest(BaseModel):
+    text: str = Field(default="", max_length=1_000_000)
+    target_group_id: str | None = None
+
+
 class AccountCreateRequest(BaseModel):
     tokens: list[str] = Field(default_factory=list)
     accounts: list[dict[str, Any]] = Field(default_factory=list)
@@ -2142,6 +2147,58 @@ def create_router() -> APIRouter:
                 include_items=False,
             ),
         }
+    @router.post("/api/accounts/import-refresh-token-delivery")
+    async def import_refresh_token_delivery(
+            body: RefreshTokenDeliveryImportRequest,
+            authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        if not body.text.strip():
+            raise HTTPException(status_code=400, detail={"error": "没有可导入的 RT"})
+        target_group_id = _target_account_group_id(body.target_group_id)
+        try:
+            result = await run_in_threadpool(
+                account_service.import_refresh_token_delivery,
+                body.text,
+                target_group_id=target_group_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+
+        access_tokens = [
+            _clean_text(token)
+            for token in result.get("access_tokens") or []
+            if _clean_text(token)
+        ]
+        updated_ids: list[str] = []
+        labels: dict[str, str] = {}
+        for token in access_tokens:
+            account = account_service.get_account(token) or {}
+            account_id = _clean_text(account.get("management_id"))
+            if not account_id:
+                continue
+            updated_ids.append(account_id)
+            labels[account_id] = _clean_text(account.get("email")) or account_id
+        errors = [
+            item for item in result.get("errors") or []
+            if isinstance(item, dict)
+        ]
+        return _account_mutation_response(
+            added=max(0, int(result.get("added") or 0)),
+            skipped=max(0, int(result.get("skipped") or 0)),
+            synced=0,
+            updated_ids=updated_ids,
+            errors=errors,
+            events=_account_mutation_events(
+                action="import_account",
+                success_ids=updated_ids,
+                errors=errors,
+                labels=labels,
+                success_message="账号已保存",
+            ),
+            include_items=False,
+        )
+
     @router.post("/api/accounts/oauth/start")
     async def start_oauth_login(
             body: OAuthLoginStartRequest,

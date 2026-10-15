@@ -7,6 +7,7 @@ auth_base = "https://auth.openai.com"
 platform_base = "https://platform.openai.com"
 platform_oauth_client_id = "app_2SKx67EdpoN0G6j64rFvigXD"
 platform_oauth_redirect_uri = f"{platform_base}/auth/callback"
+chatgpt_ios_oauth_redirect_uri = "com.openai.chat://auth0.openai.com/ios/com.openai.chat/callback"
 platform_oauth_audience = "https://api.openai.com/v1"
 platform_auth0_client = "eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9"
 
@@ -21,6 +22,30 @@ sec_ch_ua_full_version_list = (
     '"Google Chrome";v="142.0.0.0", '
     '"Not_A Brand";v="99.0.0.0"'
 )
+
+def oauth_refresh_request(
+    refresh_token: str,
+    *,
+    client_id: str,
+    redirect_uri: str = "",
+) -> tuple[dict[str, dict[str, str]], str]:
+    """Build the refresh-token request for one Upstream Account.
+
+    Accounts issued with the iOS redirect must send that redirect as JSON.
+    Accounts without one keep the form body used by the existing refresh path.
+    """
+
+    body = {
+        "client_id": client_id,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+    redirect = str(redirect_uri or "").strip()
+    if redirect:
+        body["redirect_uri"] = redirect
+        return {"json": body}, "application/json"
+    return {"data": body}, "application/x-www-form-urlencoded"
+
 
 common_headers = {
     "accept": "application/json",

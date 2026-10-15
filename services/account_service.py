@@ -118,6 +118,7 @@ class AccountService:
     _REFRESH_PROGRESS_EVENT_LIMIT = ACCOUNT_OPERATION_EVENT_LIMIT
     _STORAGE_MUTATION_MAX_ATTEMPTS = 4
     _ACCOUNT_SNAPSHOT_TTL_SECONDS = 5.0
+    _IMAGE_MODEL_NOT_FOUND_COOLDOWN_SECONDS = 600
     _GIT_ACCOUNT_SNAPSHOT_TTL_SECONDS = 60.0
     # Operational totals only; resettable state such as invalid_count stays LWW.
     _ADDITIVE_ACCOUNT_COUNTER_FIELDS = frozenset({"success", "fail"})
@@ -161,6 +162,7 @@ class AccountService:
         self._accounts = self._load_accounts()
         self._account_snapshot_checked_at = time.monotonic()
         self._image_inflight: dict[str, int] = {}
+        self._image_model_not_found_until: dict[str, float] = {}
         self._image_failure_refresh_lock = Lock()
         self._image_failure_refresh_active: set[str] = set()
         self._image_failure_refresh_active_scopes: dict[str, str] = {}
@@ -693,6 +695,7 @@ class AccountService:
             return
         for token in removed_tokens:
             self._image_inflight.pop(token, None)
+            self._image_model_not_found_until.pop(token, None)
         self._token_aliases = {
             source: target
             for source, target in self._token_aliases.items()
@@ -1009,6 +1012,16 @@ class AccountService:
         normalized.pop("enabled", None)
         normalized.pop("auto_disabled", None)
         normalized["email"] = normalized.get("email") or None
+        password = str(normalized.get("password") or "").strip()
+        if password:
+            normalized["password"] = password
+        else:
+            normalized.pop("password", None)
+        oauth_redirect_uri = str(normalized.get("oauth_redirect_uri") or "").strip()
+        if oauth_redirect_uri:
+            normalized["oauth_redirect_uri"] = oauth_redirect_uri
+        else:
+            normalized.pop("oauth_redirect_uri", None)
         normalized["user_id"] = normalized.get("user_id") or None
         normalized["proxy"] = str(normalized.get("proxy") or "").strip()
         source_type = normalized.get("source_type")
@@ -1083,6 +1096,7 @@ class AccountService:
             normalized.get("access_token"),
             normalized.get("refresh_token"),
             normalized.get("id_token"),
+            normalized.get("password"),
         )
         diagnostic_proxies = (normalized.get("proxy"),)
         for key in (
@@ -1285,6 +1299,7 @@ class AccountService:
                 account.get("access_token"),
                 account.get("refresh_token"),
                 account.get("id_token"),
+                account.get("password"),
             ),
             proxy_values=(account.get("proxy"),),
             limit=2000,
@@ -1308,20 +1323,23 @@ class AccountService:
 
         session = requests.Session(**proxy_settings.build_session_kwargs(account=account, impersonate="chrome110", verify=True))
         try:
+            from services.openai_oauth import oauth_refresh_request
+
+            request_kwargs, content_type = oauth_refresh_request(
+                refresh_token,
+                client_id=self._OAUTH_CLIENT_ID,
+                redirect_uri=str((account or {}).get("oauth_redirect_uri") or ""),
+            )
             with account_processing_slot():
                 response = session.post(
                     self._OAUTH_TOKEN_URL,
                     headers={
                         "Accept": "application/json",
-                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Content-Type": content_type,
                         "User-Agent": self._OAUTH_USER_AGENT,
                     },
-                    data={
-                        "grant_type": "refresh_token",
-                        "refresh_token": refresh_token,
-                        "client_id": self._OAUTH_CLIENT_ID,
-                    },
                     timeout=60,
+                    **request_kwargs,
                 )
             raw_text = self._safe_response_text(response)
             try:
@@ -1364,6 +1382,16 @@ class AccountService:
             self._image_inflight[new_token] = (
                 int(self._image_inflight.get(new_token, 0)) + old_inflight
             )
+        cooled_until = max(
+            (
+                float(self._image_model_not_found_until.pop(source, 0.0) or 0.0)
+                for source in alias_sources
+            ),
+            default=0.0,
+        )
+        if cooled_until > time.monotonic():
+            current_until = float(self._image_model_not_found_until.get(new_token, 0.0) or 0.0)
+            self._image_model_not_found_until[new_token] = max(current_until, cooled_until)
 
         with self._image_failure_refresh_lock:
             old_scopes = [
@@ -1836,6 +1864,23 @@ class AccountService:
         with self._lock:
             return list(self._accounts)
 
+    def _image_model_not_found_blocked_locked(self, token: str, now: float | None = None) -> bool:
+        until = self._image_model_not_found_until.get(token)
+        if until is None:
+            return False
+        if (time.monotonic() if now is None else now) >= until:
+            self._image_model_not_found_until.pop(token, None)
+            return False
+        return True
+
+    def _cool_down_image_model_not_found_locked(self, token: str) -> None:
+        resolved = str(token or "").strip()
+        if not resolved:
+            return
+        self._image_model_not_found_until[resolved] = (
+            time.monotonic() + self._IMAGE_MODEL_NOT_FOUND_COOLDOWN_SECONDS
+        )
+
     def _list_ready_candidate_tokens(
             self,
             excluded_tokens: set[str] | None = None,
@@ -1853,6 +1898,7 @@ class AccountService:
                and self._account_matches_source_type(item, source_type)
                and (token := item.get("access_token") or "")
                and token not in excluded
+               and not self._image_model_not_found_blocked_locked(token)
         ]
 
     def _list_available_candidate_tokens(
@@ -2681,6 +2727,83 @@ class AccountService:
                 aligned_results[index] = status
             result["item_results"] = aligned_results
         return result
+
+    def import_refresh_token_delivery(
+        self,
+        text: str,
+        *,
+        target_group_id: str | None = None,
+    ) -> dict:
+        """Exchange delivery-format refresh tokens, then save one account batch."""
+
+        from services.openai_oauth import chatgpt_ios_oauth_redirect_uri
+        from services.refresh_token_delivery import (
+            build_refresh_token_delivery_accounts,
+            parse_refresh_token_delivery,
+            public_exchange_error,
+        )
+
+        rows, parse_errors = parse_refresh_token_delivery(text)
+        if not rows and not parse_errors:
+            raise ValueError("没有可导入的 RT")
+
+        secrets = tuple(
+            value
+            for row in rows
+            for value in (row.refresh_token, row.password)
+            if value
+        )
+        exchanged: dict[int, dict[str, str]] = {}
+        exchange_errors: list[dict[str, str]] = []
+
+        def exchange(row):
+            try:
+                token_data = self._request_access_token_refresh(
+                    row.refresh_token,
+                    {"oauth_redirect_uri": chatgpt_ios_oauth_redirect_uri},
+                )
+            except Exception as exc:
+                return row, None, exc
+            return row, token_data, None
+
+        worker_count = account_processing_worker_count(len(rows))
+        if worker_count <= 1:
+            outcomes = [exchange(row) for row in rows]
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                outcomes = list(pool.map(exchange, rows))
+
+        for row, token_data, exc in outcomes:
+            access_token = str((token_data or {}).get("access_token") or "").strip()
+            if exc is not None or not access_token:
+                exchange_errors.append(
+                    public_exchange_error(
+                        exc or RuntimeError("empty access_token"),
+                        row,
+                        secrets,
+                    )
+                )
+                continue
+            exchanged[row.line_number] = token_data
+
+        payloads = build_refresh_token_delivery_accounts(
+            rows,
+            exchanged,
+            redirect_uri=chatgpt_ios_oauth_redirect_uri,
+            target_group_id=target_group_id,
+        )
+        added = 0
+        skipped = 0
+        if payloads:
+            saved = self.add_account_items(payloads, return_items=False)
+            added = int(saved.get("added") or 0)
+            skipped = int(saved.get("skipped") or 0)
+        return {
+            "added": added,
+            "skipped": skipped,
+            "access_tokens": [item["access_token"] for item in payloads],
+            "errors": [*parse_errors, *exchange_errors],
+        }
 
     @account_processing_batch
     def add_accounts(self, tokens: list[str], source_type: str = "web", return_items: bool = True) -> dict:
@@ -4048,6 +4171,8 @@ class AccountService:
         with self._image_slot_condition:
             access_token = self._resolve_access_token_locked(access_token)
             self._release_image_slot_locked(access_token)
+            if failure is not None and failure.code == "image_model_not_found":
+                self._cool_down_image_model_not_found_locked(access_token)
             try:
                 current = self._accounts.get(access_token)
                 if current is None:
@@ -4921,6 +5046,7 @@ class AccountService:
                     "refresh_token",
                     "id_token",
                     "password",
+                    "oauth_redirect_uri",
                     "type",
                     "plan_type",
                     "export_type",
@@ -4982,6 +5108,9 @@ class AccountService:
             password = str(account.get("password") or "").strip()
             if password:
                 item["password"] = password
+            oauth_redirect_uri = str(account.get("oauth_redirect_uri") or "").strip()
+            if oauth_redirect_uri:
+                item["oauth_redirect_uri"] = oauth_redirect_uri
             items.append(item)
         return items
 

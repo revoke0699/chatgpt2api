@@ -89,7 +89,7 @@ docker compose up -d
 | OpenAI 兼容 API | `http://localhost:3000/v1` |
 | 数据目录        | `./data`                   |
 
-`.env` 中的 `CHATGPT2API_AUTH_KEY` 优先于 `config.json` 的 `auth-key`。Compose 使用独立运行时卷支持控制台在线更新；控制台设置、账号、用户密钥、调用日志和指标写入 Application Database。不要提交本地 `.env`、`config.json` 或 `data/`。
+`.env` 中的 `CHATGPT2API_AUTH_KEY` 优先于 `config.json` 的 `auth-key`。Compose 同时启动不发布端口的私有 Sentinel solver，启动前需在 `.env` 设置 `SENTINEL_SOLVER_KEY`，见 [部署说明](docs/deployment.md)。Compose 使用独立运行时卷支持控制台在线更新；控制台设置、账号、用户密钥、调用日志和指标写入 Application Database。不要提交本地 `.env`、`config.json` 或 `data/`。
 
 ### PostgreSQL 18
 
@@ -115,7 +115,7 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 | :---: | :--------- | :------------------------------------------------------------------------------------------------------------- |
 |   🔌   | API 网关   | Chat Completions、Responses、Messages、搜索、图片生成、图片编辑、PPT / PSD 与统一可编辑文件任务                |
 |   💬   | 对话画图   | 文本对话、联网搜索、文生图、图生图、多图参考、局部编辑、Markdown、代码高亮、引用来源和推理强度                 |
-|   👥   | 账号管理   | 手动添加、OAuth、Access Token、Session JSON、CPA、远程 CPA、Sub2API 导入，以及搜索、筛选、分组、导出和批量处理 |
+|   👥   | 账号管理   | 手动添加、OAuth、Access Token、RT 发货文本、Session JSON、CPA、远程 CPA、Sub2API 导入，以及搜索、筛选、分组、导出和批量处理 |
 |   🔑   | 凭证与额度 | 独立展示 AT / RT 状态，支持 RT 刷新 AT、同步套餐与额度、指定账号文本/画图测试和异常账号处置                    |
 |   ⚙️   | 调度与并发 | 多账号选择、账号处理并发、单账号图片并发、多图并行、失败换号、额度与限流状态管理                               |
 |   🌐   | 代理出口   | 账号代理、账号组代理、多出口代理组、节点图片并发、轮换间隔、默认出口、备用出口和连通性检测                     |

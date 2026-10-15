@@ -9,7 +9,9 @@ contracts or implementation.
 ## Account import
 
 Manual JSON/credential import writes through the account API and
-`AccountService`. CPA and Sub2API use one shared remote-job lifecycle.
+`AccountService`. RT delivery text is exchanged for an access token on that
+same route, then saved as one batch. CPA and Sub2API use one shared remote-job
+lifecycle.
 
 ```mermaid
 sequenceDiagram

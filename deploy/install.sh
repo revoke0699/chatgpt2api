@@ -18,6 +18,9 @@ POSTGRES_USER="${POSTGRES_USER_INPUT:-chatgpt2api}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 INSTALL_LANG="${INSTALL_LANG:-}"
 CHATGPT2API_IMAGE="${CHATGPT2API_IMAGE:-}"
+SENTINEL_SOLVER_KEY="${SENTINEL_SOLVER_KEY:-}"
+SENTINEL_SOLVER_TIMEZONE="${SENTINEL_SOLVER_TIMEZONE:-}"
+SENTINEL_SOLVER_PROXY="${SENTINEL_SOLVER_PROXY:-}"
 
 UI_DEV="/dev/tty"
 if [[ ! -r "${UI_DEV}" ]]; then
@@ -45,6 +48,9 @@ EOF
   POSTGRES_PASSWORD=generated-automatically
   INSTALL_LANG=zh|en
   CHATGPT2API_IMAGE=ghcr.io/yukkcat/chatgpt2api:latest
+  SENTINEL_SOLVER_KEY=generated-when-empty
+  SENTINEL_SOLVER_TIMEZONE=Asia/Shanghai
+  SENTINEL_SOLVER_PROXY=
 EOF
 
   printf '\n%s\n' "$(text usage_flags)"
@@ -576,6 +582,11 @@ prepare_docker_bundle() {
 
   mkdir -p "${INSTALL_DIR}"
   download_file "docker-compose.yml"
+  download_file "sentinel_solver/Dockerfile"
+  download_file "sentinel_solver/requirements.txt"
+  download_file "sentinel_solver/app.py"
+  download_file "sentinel_solver/vm.js"
+  download_file "sentinel_solver/LICENSE"
   if [[ "${DATABASE_MODE}" == "postgres-local" ]]; then
     download_file "docker-compose.postgres.yml"
   fi
@@ -621,6 +632,9 @@ POSTGRES_DB=${POSTGRES_DB}
 POSTGRES_USER=${POSTGRES_USER}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 TZ=Asia/Shanghai
+SENTINEL_SOLVER_KEY=${SENTINEL_SOLVER_KEY}
+SENTINEL_SOLVER_TIMEZONE=${SENTINEL_SOLVER_TIMEZONE}
+SENTINEL_SOLVER_PROXY=${SENTINEL_SOLVER_PROXY}
 EOF
 
   mv "${tmp_file}" "${env_file}"
@@ -640,8 +654,12 @@ run_docker() {
   fi
 
   ui_println "[$(text prefix_info)] $(text info_start_docker)"
-  (cd "${INSTALL_DIR}" && docker compose "${compose_args[@]}" pull)
-  (cd "${INSTALL_DIR}" && docker compose "${compose_args[@]}" up -d)
+  if [[ "${DATABASE_MODE}" == "postgres-local" ]]; then
+    (cd "${INSTALL_DIR}" && docker compose "${compose_args[@]}" pull app postgres)
+  else
+    (cd "${INSTALL_DIR}" && docker compose "${compose_args[@]}" pull app)
+  fi
+  (cd "${INSTALL_DIR}" && docker compose "${compose_args[@]}" up -d --build)
 }
 
 ensure_uv() {
@@ -679,6 +697,7 @@ run_python() {
   export CHATGPT2API_AUTH_KEY="${AUTH_KEY}"
   export CHATGPT2API_THREAD_TOKENS="${THREAD_TOKENS}"
   export DATABASE_URL="${DATABASE_URL}"
+  export CHATGPT2API_SENTINEL_SOLVER_KEY="${SENTINEL_SOLVER_KEY}"
   exec uv run uvicorn main:app --host 0.0.0.0 --port "${PORT}"
 }
 
@@ -701,6 +720,9 @@ main() {
     AUTH_KEY="$(generate_auth_key)"
   fi
   AUTH_KEY="$(prompt_input "$(text prompt_auth)" "${AUTH_KEY}")"
+  if [[ -z "${SENTINEL_SOLVER_KEY}" ]]; then
+    SENTINEL_SOLVER_KEY="$(generate_auth_key)"
+  fi
 
   validate_inputs
   if [[ "${MODE}" == "docker" ]]; then

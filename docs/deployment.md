@@ -17,6 +17,15 @@ docker compose up -d
 
 镜像中的 `/opt/chatgpt2api` 是只读应用种子，`/app` 是受管运行目录。首次启动或镜像版本变化时，入口脚本会用镜像种子刷新 `/app`，再按锁文件同步 Python 依赖；同一镜像正常重启时会保留控制台在线更新后的运行版本。业务数据始终留在独立的 `data/` 挂载中。
 
+`docker compose up -d` 同时构建并启动私有 `sentinel-solver`。该服务只在 Compose 网络内监听，不映射宿主机端口。启动前在 `.env` 设置 `SENTINEL_SOLVER_KEY`（可用 `openssl rand -hex 24` 生成）。主服务通过 `CHATGPT2API_SENTINEL_SOLVER_URL=http://sentinel-solver:8080` 和同一把密钥调用它。solver 只接收 Turnstile 挑战参数，不接收账号 token、Cookie 或用户 prompt。
+
+生图代理的实际出口时区应写入 `SENTINEL_SOLVER_TIMEZONE`（IANA 名称，例如 `Asia/Shanghai`）。若账号使用 HTTP 代理，把同一代理写入 `SENTINEL_SOLVER_PROXY`，让 requirements `p`、User-Agent 和挑战页面处于同一环境。密钥为空时 solver 进程会直接退出。升级时先拉取应用镜像，再构建 solver：
+
+```bash
+docker compose pull app
+docker compose up -d --build
+```
+
 ### 本地 PostgreSQL 18
 
 需要由 Compose 一并运行 PostgreSQL 时，在 `.env` 中设置数据库密码：
@@ -128,8 +137,8 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml exec -T post
 
 ```bash
 git pull --ff-only
-docker compose pull
-docker compose up -d
+docker compose pull app
+docker compose up -d --build
 ```
 
 不要把 `/app` 运行时卷当作业务备份；它可以从发布镜像重新创建。不要使用 `docker compose down -v` 执行普通升级，因为该命令还会删除 Compose 管理的命名卷。
@@ -139,15 +148,15 @@ docker compose up -d
 镜像部署升级：
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose pull app
+docker compose up -d --build
 ```
 
 本地 PostgreSQL Compose 部署升级：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml pull
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml pull app postgres
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d --build
 ```
 
 镜像部署固定或回退版本时，在 `.env` 设置 `CHATGPT2API_IMAGE=ghcr.io/yukkcat/chatgpt2api:<tag>`，再执行对应的 `pull` 与 `up`。镜像版本变化后，入口脚本会用该镜像刷新受管运行目录；Git 检出标签只影响源码运行，不会改变 Compose 使用的镜像版本。升级后检查：

@@ -21,6 +21,7 @@ export const ACCOUNT_IMPORT_MODE_CATALOG = [
   { label: 'OAuth 登录已有账号', value: 'oauth_login' },
   { label: '导入完整备份文件', value: 'backup_json' },
   { label: '导入 Access Token', value: 'access_token' },
+  { label: '导入 RT 发货文本', value: 'refresh_token_delivery' },
   { label: '导入 Session JSON', value: 'session_json' },
   { label: '导入 CPA JSON 文件', value: 'cpa_json' },
   { label: '导入 Sub2API JSON 文件', value: 'sub2api_json' },
@@ -156,6 +157,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
   const oauthAuthorizeUrl = ref('')
   const oauthRedirectUriPrefix = ref('')
   const manualTokenText = ref('')
+  const refreshTokenDeliveryText = ref('')
   const sessionJsonText = ref('')
   const toast = useToast()
   const confirmDialog = useConfirmDialog()
@@ -437,6 +439,132 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
     await importManualTokenText()
   }
 
+  function deliveryLineCount(text: string) {
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#')).length
+  }
+
+  async function importRefreshTokenDelivery() {
+    const text = refreshTokenDeliveryText.value
+    const total = deliveryLineCount(text)
+    if (!total) {
+      toast.warning('没有可导入的 RT')
+      return
+    }
+    const confirmed = await confirmDialog.ask({
+      title: '导入 RT 发货文本',
+      message: `即将导入 ${total} 行。每行用 RT 换取 AT，并保存账号、GPT 密码和 RT。邮箱密码不会保存。是否继续？`,
+      confirmText: '确认导入',
+      cancelText: '取消',
+    })
+    if (!confirmed) return
+
+    importBusy.value = true
+    showImportModal.value = false
+    await options.bulkProgress.start('导入 RT 发货文本', total, 'import')
+    options.bulkProgress.update({
+      total,
+      processed: 0,
+      stage: 'read_credentials',
+      stage_label: '换取 AT',
+    })
+    let added = 0
+    let skipped = 0
+    let synced = 0
+    let importedAccountIds: string[] = []
+    const errors: string[] = []
+    let accountsSaved = false
+    try {
+      const result = await accountsApi.importRefreshTokenDelivery(text, {
+        targetGroupId: targetGroupId(),
+      })
+      accountsSaved = true
+      added = Math.max(0, Number(result.added || 0))
+      skipped = Math.max(0, Number(result.skipped || 0))
+      importedAccountIds = Array.from(new Set(result.updated_ids || []))
+      errors.push(...(Array.isArray(result.errors) ? result.errors.filter(Boolean) : []))
+      options.bulkProgress.appendEvents(result.events || [])
+      if (added + skipped > 0) refreshTokenDeliveryText.value = ''
+
+      if (importedAccountIds.length > 0) {
+        options.bulkProgress.update({
+          total,
+          processed: 0,
+          stage: 'sync_accounts',
+          stage_label: '同步账号与额度',
+        })
+        const syncResult = await accountsApi.syncAccountsWithProgress(
+          importedAccountIds,
+          (progress) => {
+            options.bulkProgress.update({
+              ...progress,
+              total,
+              processed: Math.min(total, Number(progress.processed || 0)),
+              done: false,
+              stage: 'sync_accounts',
+              stage_label: '同步账号与额度',
+            })
+          },
+          importedAccountIds.length,
+        )
+        synced = Math.max(0, Number(syncResult.progress?.result?.synced || 0))
+        errors.push(
+          ...(syncResult.progress?.result?.errors || [])
+            .map(operationErrorText)
+            .filter(Boolean),
+        )
+      }
+
+      options.bulkProgress.finish({
+        total,
+        processed: total,
+        stage: 'completed',
+        stage_label: '完成',
+        import_result: { added, skipped, synced, failed: errors.length },
+      })
+      refreshAccountListInBackground()
+      if (errors.length > 0) {
+        await promptRemoveImportedAbnormalAccounts(importedAccountIds, errors.length)
+      }
+    } catch (error) {
+      const message = options.normalizeErrorMessage(error)
+      options.bulkProgress.finish({
+        total,
+        processed: accountsSaved ? total : 0,
+        stage: 'completed',
+        stage_label: '完成',
+        error: accountsSaved ? `账号已保存，后续同步未完成：${message}` : message,
+        import_result: {
+          added,
+          skipped,
+          synced,
+          failed: Math.max(1, errors.length),
+        },
+      })
+      options.setError(accountsSaved ? 'RT 发货文本已保存，但同步失败' : '导入 RT 发货文本失败', error, false)
+      if (accountsSaved) refreshAccountListInBackground()
+    } finally {
+      importBusy.value = false
+      options.bulkProgress.end()
+    }
+  }
+
+  async function importRefreshTokenDeliveryFile(file: File | null | undefined) {
+    if (!file) return
+    importBusy.value = true
+    try {
+      refreshTokenDeliveryText.value = await file.text()
+    } catch (error) {
+      options.setError('读取 RT 发货文本失败', error)
+      return
+    } finally {
+      importBusy.value = false
+    }
+    await importRefreshTokenDelivery()
+  }
+
   async function importSessionJson() {
     try {
       await importCredentialPayloadBatch(
@@ -705,12 +833,15 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
     oauthAuthorizeUrl,
     oauthRedirectUriPrefix,
     manualTokenText,
+    refreshTokenDeliveryText,
     sessionJsonText,
     setImportMode,
     openImportModal,
     closeImportModal,
     importManualTokenText,
     importTokenTextFile,
+    importRefreshTokenDelivery,
+    importRefreshTokenDeliveryFile,
     importSessionJson,
     startOAuthLogin,
     openOAuthAuthorizeUrl,

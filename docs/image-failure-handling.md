@@ -10,7 +10,9 @@
 
 HTTP 400 的图片结果被分类为文本结果：`content_policy_violation`、`invalid_image_input`、`upstream_text_reply` 和 `unsupported_model`。这类结果会保留可展示的上游文本，不将账号切换或账号记失败。
 
-其他 `ImageFailure` 的 `outcome` 是失败，允许执行账号切换与账号验证流程。是否实际切换还取决于账号池、尝试上限和当前设置；分类对象只给出一致的切换资格，不保证一定能找到下一个账号。
+其他 `ImageFailure` 的 `outcome` 是失败，具备账号切换资格。是否实际切换还取决于账号池、尝试上限和当前设置；分类对象只给出一致的切换资格，不保证一定能找到下一个账号。账号验证只在该失败的 `verify_account` 为真时发生。
+
+`image_model_not_found` 只匹配实际 auto 图片会话：上游模型 slug 为 `auto`，路径为 `/backend-api/f/conversation` 或 `/backend-api/f/conversation/prepare`，HTTP 状态为 404，且 JSON `detail` 精确等于 `Model not found`。它在原有 `image_max_account_attempts` 内切换账号，并把该账号做 10 分钟进程内冷却。冷却不写入额度、不把状态改为封禁或限流、不扣代理健康。其他 404、非 auto slug 和非图片会话路径仍走原分类。对外文案保持通用工具错误，不回传上游 `Model not found`。进程重启后冷却消失。
 
 常见类别包括：
 
@@ -23,6 +25,7 @@ HTTP 400 的图片结果被分类为文本结果：`content_policy_violation`、
 | `image_tool_error` | 上游图片工具终态异常 | 502 |
 | `image_download_failed` | 已生成但交付下载失败 | 502 |
 | `no_available_account` | 当前账号池无法选择账号 | 503 |
+| `image_model_not_found` | auto 图片会话精确 404 `Model not found`，本地冷却 10 分钟 | 404 |
 
 ## 诊断字段
 

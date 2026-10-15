@@ -190,6 +190,80 @@ class UpstreamHTTPError(RuntimeError):
         super().__init__(f"{context} failed: status={status_code}, body={body_str}")
 
 
+_STREAM_ERROR_BODY_DEADLINE_SECS = 2.0
+
+
+def _abort_response_stream(response: requests.Response) -> None:
+    """Stop a curl_cffi stream without waiting for its stream task."""
+    try:
+        quit_now = getattr(response, "quit_now", None)
+        if quit_now is not None:
+            quit_now.set()
+    except Exception:
+        pass
+    try:
+        curl = getattr(response, "curl", None)
+        if curl is not None:
+            curl.close()
+    except Exception:
+        pass
+    try:
+        response._stream_closed = True
+    except Exception:
+        pass
+
+
+def _read_stream_error_body(response: requests.Response) -> bytes:
+    """Read a short upstream error body from a streaming response queue.
+
+    curl_cffi leaves ``response.content`` empty while ``stream=True``. The
+    404 JSON sits in ``response.queue`` until something drains it.
+    """
+    stream_queue = getattr(response, "queue", None)
+    if stream_queue is None:
+        return b""
+    chunks: list[bytes] = []
+    deadline = time.monotonic() + _STREAM_ERROR_BODY_DEADLINE_SECS
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            item = stream_queue.get(timeout=min(0.2, remaining))
+        except queue.Empty:
+            continue
+        if item is STREAM_END or isinstance(item, BaseException):
+            break
+        if isinstance(item, bytes):
+            chunks.append(item)
+        elif isinstance(item, str):
+            chunks.append(item.encode("utf-8", "replace"))
+        else:
+            break
+    _abort_response_stream(response)
+    return b"".join(chunks)
+
+
+def _response_error_text(response: requests.Response) -> str:
+    if getattr(response, "queue", None) is not None:
+        raw = _read_stream_error_body(response)
+        if raw:
+            return raw.decode("utf-8", "replace")
+    content = b""
+    try:
+        content = response.content
+    except Exception:
+        content = b""
+    if isinstance(content, bytes) and content:
+        return content.decode("utf-8", "replace")
+    if content:
+        return str(content)
+    try:
+        return str(getattr(response, "text", "") or "")
+    except Exception:
+        return ""
+
+
 def ensure_ok(
     response: requests.Response,
     context: str,
@@ -198,11 +272,17 @@ def ensure_ok(
 ) -> None:
     if 200 <= response.status_code < 300:
         return
-    body: Any = response.text
-    try:
-        body = response.json()
-    except Exception:
-        pass
+    # stream=True leaves response.text and response.content empty. Image
+    # conversation 404s are opened as streams, so drain the stream queue first.
+    raw_text = _response_error_text(response)
+    body: Any = raw_text
+    if raw_text:
+        try:
+            parsed = json.loads(raw_text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            body = parsed
     retry_after_header = response.headers.get("Retry-After") if hasattr(response, "headers") else None
     retry_after: int | None = None
     if retry_after_header is not None:

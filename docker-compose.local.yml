@@ -12,6 +12,11 @@ services:
       - ./config.json:/app/config.json
     environment:
       DATABASE_URL: sqlite:////app/data/chatgpt2api.db
+      CHATGPT2API_SENTINEL_SOLVER_URL: http://sentinel-solver:8080
+      CHATGPT2API_SENTINEL_SOLVER_KEY: ${SENTINEL_SOLVER_KEY:-}
+    depends_on:
+      sentinel-solver:
+        condition: service_healthy
     # 应用数据库；删除 DATABASE_URL 时同样默认使用 /app/data/chatgpt2api.db
     #   DATABASE_URL: postgresql://user:password@host:5432/dbname
 
@@ -20,3 +25,28 @@ services:
 
     # 基础 URL (可选)
     #   CHATGPT2API_BASE_URL: https://your-domain.com
+
+  sentinel-solver:
+    build:
+      context: ./sentinel_solver
+    image: chatgpt2api-sentinel-solver:local
+    shm_size: 1gb
+    expose:
+      - "8080"
+    environment:
+      SENTINEL_SOLVER_KEY: ${SENTINEL_SOLVER_KEY:-}
+      SENTINEL_SOLVER_PROXY: ${SENTINEL_SOLVER_PROXY:-}
+      SENTINEL_SOLVER_TIMEZONE: ${SENTINEL_SOLVER_TIMEZONE:-}
+      SENTINEL_SOLVER_USER_AGENT: ${SENTINEL_SOLVER_USER_AGENT:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,urllib.request; req=urllib.request.Request('http://127.0.0.1:8080/health', headers={'Authorization':'Bearer '+os.environ['SENTINEL_SOLVER_KEY']}); urllib.request.urlopen(req, timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 45s

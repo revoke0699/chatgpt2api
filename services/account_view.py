@@ -132,6 +132,7 @@ def _diagnostic(value: object, account: dict[str, Any], limit: int = 500) -> str
             account.get("access_token"),
             account.get("refresh_token"),
             account.get("id_token"),
+            account.get("password"),
         ),
         proxy_values=(account.get("proxy"),),
         limit=limit,

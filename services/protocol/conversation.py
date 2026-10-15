@@ -442,14 +442,42 @@ def build_image_prompt(prompt: str, size: str | None, quality: str = "auto") -> 
     return f"{prompt.strip()}\n\n{''.join(hints)}" if hints else prompt
 
 
+class _ApproximateTokenEncoding:
+    """Count tokens without downloading a tiktoken encoding file."""
+
+    def encode(self, text: str, *args: object, **kwargs: object) -> list[int]:
+        value = text if isinstance(text, str) else str(text or "")
+        if not value:
+            return []
+        return [0] * ((len(value.encode("utf-8")) + 3) // 4)
+
+
+def _loaded_tiktoken_encoding(name: str):
+    registry = getattr(tiktoken, "registry", None)
+    loaded = getattr(registry, "ENCODINGS", None)
+    if isinstance(loaded, dict) and name in loaded:
+        return loaded[name]
+    return None
+
+
 def encoding_for_model(model: str):
+    """Resolve a tokenizer without fetching encodings over the network.
+
+    Unknown image model names are not in tiktoken's map. ``get_encoding``
+    then downloads ``o200k_base`` through urllib3 with no timeout. That
+    download runs after the PNG is already saved and was aborting the HTTP
+    response with ``Connection aborted``.
+    """
     try:
         return tiktoken.encoding_for_model(model)
     except KeyError:
-        try:
-            return tiktoken.get_encoding("o200k_base")
-        except KeyError:
-            return tiktoken.get_encoding("cl100k_base")
+        for name in ("o200k_base", "cl100k_base"):
+            loaded = _loaded_tiktoken_encoding(name)
+            if loaded is not None:
+                return loaded
+        return _ApproximateTokenEncoding()
+    except Exception:
+        return _ApproximateTokenEncoding()
 
 
 def count_message_image_tokens(messages: list[dict[str, Any]], model: str) -> int:

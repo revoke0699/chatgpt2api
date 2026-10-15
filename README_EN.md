@@ -70,7 +70,7 @@ docker compose up -d
 | OpenAI-compatible API | `http://localhost:3000/v1` |
 | Data directory | `./data` |
 
-`CHATGPT2API_AUTH_KEY` in `.env` takes precedence over `auth-key` in `config.json`. Compose uses a dedicated runtime volume for console-managed online updates. Console settings, upstream accounts, user keys, call records, and metrics are stored in the Application Database. Do not commit local `.env`, `config.json`, or `data/` files.
+`CHATGPT2API_AUTH_KEY` in `.env` takes precedence over `auth-key` in `config.json`. Compose also starts a private Sentinel solver and does not publish its port; set `SENTINEL_SOLVER_KEY` in `.env` before `docker compose up`. See `docs/deployment.md`. Compose uses a dedicated runtime volume for console-managed online updates. Console settings, upstream accounts, user keys, call records, and metrics are stored in the Application Database. Do not commit local `.env`, `config.json`, or `data/` files.
 
 ### PostgreSQL 18
 
@@ -100,7 +100,7 @@ Shared UI components, themes, and interaction primitives come from [yukkcat/nano
 | :---: | :--- | :--- |
 | 🔌 | API gateway | Chat Completions, Responses, Messages, search, image generation and editing, PPT/PSD generation, and unified editable-file tasks |
 | 💬 | Chat and image studio | Text chat, web search, text-to-image, image-to-image, multiple references, local editing, Markdown, syntax highlighting, citations, and reasoning effort |
-| 👥 | Account management | Manual, OAuth, Access Token, Session JSON, CPA, remote CPA, and Sub2API imports, plus search, filters, groups, exports, and batch actions |
+| 👥 | Account management | Manual, OAuth, Access Token, RT delivery text, Session JSON, CPA, remote CPA, and Sub2API imports, plus search, filters, groups, exports, and batch actions |
 | 🔑 | Credentials and quotas | Separate AT/RT states, RT-based AT renewal, plan and quota synchronization, pinned-account text/image tests, and invalid-account handling |
 | ⚙️ | Scheduling and concurrency | Multi-account selection, account-processing concurrency, per-account image concurrency, parallel images, account switching, quotas, and rate-limit state |
 | 🌐 | Proxy egress | Account and account-group proxies, multi-egress proxy groups, per-node image concurrency, rotation, default and fallback egress, and connectivity checks |

@@ -676,6 +676,29 @@
                   </div>
                 </div>
 
+                <div v-else-if="importMode === 'refresh_token_delivery'" class="space-y-3">
+                  <ImportModePanel
+                    title="导入 RT 发货文本"
+                    description="一行一个，四段用 ---- 分隔：账号----GPT密码----邮箱密码----refreshToken。系统用 RT 换取 AT，并保存账号、GPT 密码和 RT。邮箱密码不会保存。"
+                  />
+                  <textarea
+                    v-model.trim="refreshTokenDeliveryText"
+                    rows="10"
+                    class="ui-textarea-sm font-mono"
+                    placeholder="账号----GPT密码----邮箱密码----refreshToken"
+                    autocomplete="off"
+                    spellcheck="false"
+                  ></textarea>
+                  <div class="flex flex-wrap justify-end gap-2">
+                    <Button size="xs" variant="outline" :disabled="importBusy" @click="openRefreshTokenDeliveryFile">
+                      读取 TXT 文件
+                    </Button>
+                    <Button size="xs" variant="primary" :disabled="importBusy || !refreshTokenDeliveryText.trim()" @click="importRefreshTokenDelivery">
+                      {{ importBusy ? '导入中...' : '开始导入' }}
+                    </Button>
+                  </div>
+                </div>
+
                 <div v-else-if="importMode === 'session_json'" class="space-y-3">
                   <ImportModePanel title="导入 Session JSON">
                     <template #description>
@@ -764,6 +787,7 @@
     />
 
     <input ref="manualTokenFileInputRef" type="file" accept=".txt,text/plain" class="hidden" @change="handleManualTokenFileChange" />
+    <input ref="refreshTokenDeliveryFileInputRef" type="file" accept=".txt,text/plain" class="hidden" @change="handleRefreshTokenDeliveryFileChange" />
     <input ref="accountFileInputRef" type="file" accept=".json,application/json" multiple class="hidden" @change="handleAccountFileChange" />
   </div>
 </template>
@@ -853,6 +877,7 @@ const {
   oauthAuthorizeUrl,
   oauthRedirectUriPrefix,
   manualTokenText,
+  refreshTokenDeliveryText,
   sessionJsonText,
   accountGroups,
   proxyGroups,
@@ -914,6 +939,8 @@ const {
   setAccountGroupCustomProxyInput,
   importManualTokenText,
   importTokenTextFile,
+  importRefreshTokenDelivery,
+  importRefreshTokenDeliveryFile,
   importSessionJson,
   startOAuthLogin,
   openOAuthAuthorizeUrl,
@@ -953,6 +980,7 @@ watch(
 )
 
 const manualTokenFileInputRef = ref<HTMLInputElement | null>(null)
+const refreshTokenDeliveryFileInputRef = ref<HTMLInputElement | null>(null)
 const accountFileInputRef = ref<HTMLInputElement | null>(null)
 const remoteImportBusy = ref(false)
 const accountToolbarMenuClass = 'shrink-0 whitespace-nowrap'
@@ -1016,6 +1044,19 @@ async function handleManualTokenFileChange(event: Event) {
   const target = event.target as HTMLInputElement | null
   const file = target?.files?.[0]
   await importTokenTextFile(file)
+  if (target) target.value = ''
+}
+
+function openRefreshTokenDeliveryFile() {
+  if (!refreshTokenDeliveryFileInputRef.value || importBusy.value) return
+  refreshTokenDeliveryFileInputRef.value.value = ''
+  refreshTokenDeliveryFileInputRef.value.click()
+}
+
+async function handleRefreshTokenDeliveryFileChange(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  const file = target?.files?.[0]
+  await importRefreshTokenDeliveryFile(file)
   if (target) target.value = ''
 }
 

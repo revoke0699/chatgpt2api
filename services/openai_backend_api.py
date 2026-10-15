@@ -29,6 +29,7 @@ from services.image_failure import (
     ImageFailureError,
     ImagePollTimeoutError,
     InvalidAccessTokenError,
+    auto_image_model_not_found_failure,
     classify_conversation_failure,
     classify_image_exception,
     classify_upstream_message,
@@ -45,8 +46,14 @@ from utils.file_names import sanitize_public_filename
 from utils.helper import UpstreamHTTPError, ensure_ok, iter_sse_payloads, new_uuid, split_image_model
 from utils.diagnostics import diagnostic_excerpt
 from utils.log import logger
-from utils.pow import build_legacy_requirements_token, build_proof_token, parse_pow_resources
-from utils.turnstile import solve_turnstile_token
+from services.sentinel_solver_client import fetch_solver_profile, solve_turnstile
+from utils.pow import (
+    SentinelEnvironment,
+    build_legacy_requirements_token,
+    build_proof_token,
+    local_sentinel_environment,
+    parse_pow_resources,
+)
 
 
 @dataclass
@@ -62,6 +69,59 @@ class ChatRequirements:
 DEFAULT_CLIENT_VERSION = "prod-a194cd50d4416d3c0b47c740f206b12ce60f5887"
 DEFAULT_CLIENT_BUILD_NUMBER = "6708908"
 DEFAULT_POW_SCRIPT = "https://chatgpt.com/backend-api/sentinel/sdk.js"
+DEFAULT_IMPERSONATE = "chrome146"
+LEGACY_IMPERSONATES = frozenset({"chrome110"})
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+)
+
+
+def normalize_impersonate(value: str) -> str:
+    """Stored chrome110 fingerprints are rejected by the current sentinel check."""
+    normalized = str(value or "").strip().lower()
+    if not normalized or normalized in LEGACY_IMPERSONATES:
+        return DEFAULT_IMPERSONATE
+    return normalized
+
+
+def chrome_client_hints(user_agent: str) -> dict[str, str]:
+    """Client hints that match the User-Agent used to build requirements `p`."""
+    match = re.search(r"(?:Chrome|Edg)/(\d+)", user_agent)
+    major = match.group(1) if match else "146"
+    if "Edg/" in user_agent:
+        brand = "Microsoft Edge"
+    else:
+        brand = "Google Chrome"
+    if "Mac OS X" in user_agent or "Macintosh" in user_agent:
+        platform = "macOS"
+    elif "Linux" in user_agent or "X11" in user_agent:
+        platform = "Linux"
+    else:
+        platform = "Windows"
+    mobile = "?1" if "Mobile" in user_agent else "?0"
+    return {
+        "sec-ch-ua": f'"Chromium";v="{major}", "Not.A/Brand";v="24", "{brand}";v="{major}"',
+        "sec-ch-ua-mobile": mobile,
+        "sec-ch-ua-platform": f'"{platform}"',
+        "sec-ch-ua-full-version": f'"{major}.0.0.0"',
+        "sec-ch-ua-full-version-list": (
+            f'"Chromium";v="{major}.0.0.0", "Not.A/Brand";v="24.0.0.0", "{brand}";v="{major}.0.0.0"'
+        ),
+    }
+
+
+def chat_requirements_finalize_body(
+    prepare_token: str,
+    proofofwork: str,
+    turnstile: str,
+) -> dict[str, str]:
+    """Finalize accepts these three fields. Older proof_token names are ignored."""
+    return {
+        "prepare_token": str(prepare_token or ""),
+        "proofofwork": str(proofofwork or ""),
+        "turnstile": str(turnstile or ""),
+    }
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"
 CODEX_RESPONSES_MODEL = "gpt-5.5"
 SEARCH_MODEL = "gpt-5-5"
@@ -234,6 +294,7 @@ class OpenAIBackendAPI:
         self.session_id = self.fp["oai-session-id"]
         self.pow_script_sources: list[str] = []
         self.pow_data_build = ""
+        self._sentinel_environment: SentinelEnvironment | None = None
         self.progress_callback: Callable[[str], None] | None = None
         self._http_timings: dict[str, dict[str, Any]] = {}
         self._image_result_timing: dict[str, int] = {}
@@ -257,6 +318,7 @@ class OpenAIBackendAPI:
             if bool(getattr(self.proxy_profile, "image_egress_reserved", False)):
                 proxy_settings.release_image_egress(self.proxy_profile)
             raise
+        hints = chrome_client_hints(self.user_agent)
         self.session.headers.update({
             "User-Agent": self.user_agent,
             "Origin": self.base_url,
@@ -268,8 +330,8 @@ class OpenAIBackendAPI:
             "Sec-Ch-Ua": self.fp["sec-ch-ua"],
             "Sec-Ch-Ua-Arch": '"x86"',
             "Sec-Ch-Ua-Bitness": '"64"',
-            "Sec-Ch-Ua-Full-Version": '"143.0.3650.96"',
-            "Sec-Ch-Ua-Full-Version-List": '"Microsoft Edge";v="143.0.3650.96", "Chromium";v="143.0.7499.147", "Not A(Brand";v="24.0.0.0"',
+            "Sec-Ch-Ua-Full-Version": hints["sec-ch-ua-full-version"],
+            "Sec-Ch-Ua-Full-Version-List": hints["sec-ch-ua-full-version-list"],
             "Sec-Ch-Ua-Mobile": self.fp["sec-ch-ua-mobile"],
             "Sec-Ch-Ua-Model": '""',
             "Sec-Ch-Ua-Platform": self.fp["sec-ch-ua-platform"],
@@ -320,17 +382,14 @@ class OpenAIBackendAPI:
             value = str(account.get(key) or "").strip()
             if value:
                 fp[key] = value
-        fp.setdefault(
-            "user-agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-        )
-        fp.setdefault("impersonate", "chrome110")
+        fp.setdefault("user-agent", DEFAULT_USER_AGENT)
+        fp["impersonate"] = normalize_impersonate(str(fp.get("impersonate") or ""))
         fp.setdefault("oai-device-id", new_uuid())
         fp.setdefault("oai-session-id", new_uuid())
-        fp.setdefault("sec-ch-ua", '"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"')
-        fp.setdefault("sec-ch-ua-mobile", "?0")
-        fp.setdefault("sec-ch-ua-platform", '"Windows"')
+        hints = chrome_client_hints(fp["user-agent"])
+        fp.setdefault("sec-ch-ua", hints["sec-ch-ua"])
+        fp.setdefault("sec-ch-ua-mobile", hints["sec-ch-ua-mobile"])
+        fp.setdefault("sec-ch-ua-platform", hints["sec-ch-ua-platform"])
         return fp
 
     def _headers(self, path: str, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -642,26 +701,95 @@ class OpenAIBackendAPI:
             "Upgrade-Insecure-Requests": "1",
         }
 
+    def _apply_solver_profile(self, environment: SentinelEnvironment) -> None:
+        """Keep the HTTP client on the same UA and client hints as the solver page."""
+        self._sentinel_environment = environment
+        user_agent = str(environment.user_agent or "").strip()
+        if not user_agent:
+            return
+        hints = chrome_client_hints(user_agent)
+        self.user_agent = user_agent
+        self.fp["user-agent"] = user_agent
+        self.fp["sec-ch-ua"] = hints["sec-ch-ua"]
+        self.fp["sec-ch-ua-mobile"] = hints["sec-ch-ua-mobile"]
+        self.fp["sec-ch-ua-platform"] = hints["sec-ch-ua-platform"]
+        self.session.headers.update({
+            "User-Agent": user_agent,
+            "Sec-Ch-Ua": hints["sec-ch-ua"],
+            "Sec-Ch-Ua-Mobile": hints["sec-ch-ua-mobile"],
+            "Sec-Ch-Ua-Platform": hints["sec-ch-ua-platform"],
+            "Sec-Ch-Ua-Full-Version": hints["sec-ch-ua-full-version"],
+            "Sec-Ch-Ua-Full-Version-List": hints["sec-ch-ua-full-version-list"],
+        })
+
+    def _ensure_sentinel_environment(self) -> SentinelEnvironment:
+        cached = self._sentinel_environment
+        if cached is not None:
+            return cached
+        profile = fetch_solver_profile()
+        if profile is None:
+            environment = local_sentinel_environment(self.user_agent)
+        else:
+            environment = profile
+            self._apply_solver_profile(environment)
+        self._sentinel_environment = environment
+        return environment
+
+    def _pow_inputs(self) -> tuple[SentinelEnvironment, list[str], str, str]:
+        environment = self._ensure_sentinel_environment()
+        script_sources = list(environment.script_sources) or list(self.pow_script_sources)
+        data_build = environment.data_build or self.pow_data_build
+        user_agent = environment.user_agent or self.user_agent
+        return environment, script_sources, data_build, user_agent
+
+    def _image_timezone(self) -> tuple[str, int]:
+        environment = self._sentinel_environment
+        if environment is not None and environment.from_solver and environment.timezone:
+            return environment.timezone, int(environment.timezone_offset_min)
+        return "Asia/Shanghai", -480
+
+    def _image_screen(self) -> tuple[int, int]:
+        environment = self._sentinel_environment
+        if (
+            environment is not None
+            and environment.from_solver
+            and environment.screen_width > 0
+            and environment.screen_height > 0
+        ):
+            return environment.screen_width, environment.screen_height
+        return 2560, 1440
+
+    def _ensure_image_conversation_ok(self, response: requests.Response, path: str, upstream_model: str) -> None:
+        try:
+            ensure_ok(response, path)
+        except UpstreamHTTPError as exc:
+            failure = auto_image_model_not_found_failure(exc, upstream_model=upstream_model)
+            if failure is not None:
+                exc.failure = failure
+            raise
+
     def _build_requirements(self, data: Dict[str, Any], source_p: str = "") -> ChatRequirements:
         """把 sentinel 响应整理成后续对话需要的 token 集合。"""
         if (data.get("arkose") or {}).get("required"):
             raise RuntimeError("chat requirements requires arkose token, which is not implemented")
 
+        environment, script_sources, data_build, user_agent = self._pow_inputs()
         proof_token = ""
         proof_info = data.get("proofofwork") or {}
         if proof_info.get("required"):
             proof_token = build_proof_token(
                 proof_info.get("seed", ""),
                 proof_info.get("difficulty", ""),
-                self.user_agent,
-                script_sources=self.pow_script_sources,
-                data_build=self.pow_data_build,
+                user_agent,
+                script_sources=script_sources,
+                data_build=data_build,
+                environment=environment,
             )
 
         turnstile_token = ""
         turnstile_info = data.get("turnstile") or {}
-        if turnstile_info.get("required") and turnstile_info.get("dx"):
-            turnstile_token = solve_turnstile_token(turnstile_info["dx"], source_p) or ""
+        if turnstile_info.get("required"):
+            turnstile_token = solve_turnstile(str(turnstile_info.get("dx") or ""), source_p)
 
         return ChatRequirements(
             token=data.get("token", ""),
@@ -822,6 +950,8 @@ class OpenAIBackendAPI:
         }
         if requirements.proof_token:
             headers["OpenAI-Sentinel-Proof-Token"] = requirements.proof_token
+        if requirements.turnstile_token:
+            headers["OpenAI-Sentinel-Turnstile-Token"] = requirements.turnstile_token
         if conduit_token:
             headers["X-Conduit-Token"] = conduit_token
         if accept == "text/event-stream":
@@ -1173,14 +1303,16 @@ class OpenAIBackendAPI:
     def _prepare_image_conversation(self, prompt: str, requirements: ChatRequirements, model: str) -> str:
         """为图片生成准备 conduit token。"""
         path = "/backend-api/f/conversation/prepare"
+        upstream_model = self._image_model_slug(model)
+        timezone_name, timezone_offset_min = self._image_timezone()
         payload = {
             "action": "next",
             "fork_from_shared_post": False,
             "parent_message_id": new_uuid(),
-            "model": self._image_model_slug(model),
+            "model": upstream_model,
             "client_prepare_state": "success",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            "timezone_offset_min": timezone_offset_min,
+            "timezone": timezone_name,
             "conversation_mode": {"kind": "primary_assistant"},
             "system_hints": ["picture_v2"],
             "partial_query": {
@@ -1198,7 +1330,7 @@ class OpenAIBackendAPI:
             json=payload,
             timeout=60,
         )
-        ensure_ok(response, path)
+        self._ensure_image_conversation_ok(response, path, upstream_model)
         return response.json().get("conduit_token", "")
 
     def _decode_image_base64(self, image: str) -> bytes:
@@ -1305,6 +1437,9 @@ class OpenAIBackendAPI:
                 "width": item["width"],
                 "height": item["height"],
             } for item in references]
+        upstream_model = self._image_model_slug(model)
+        timezone_name, timezone_offset_min = self._image_timezone()
+        screen_width, screen_height = self._image_screen()
         payload = {
             "action": "next",
             "messages": [{
@@ -1315,10 +1450,10 @@ class OpenAIBackendAPI:
                 "metadata": metadata,
             }],
             "parent_message_id": new_uuid(),
-            "model": self._image_model_slug(model),
+            "model": upstream_model,
             "client_prepare_state": "sent",
-            "timezone_offset_min": -480,
-            "timezone": "Asia/Shanghai",
+            "timezone_offset_min": timezone_offset_min,
+            "timezone": timezone_name,
             "conversation_mode": {"kind": "primary_assistant"},
             "enable_message_followups": True,
             "system_hints": ["picture_v2"],
@@ -1330,8 +1465,8 @@ class OpenAIBackendAPI:
                 "page_height": 1072,
                 "page_width": 1724,
                 "pixel_ratio": 1.2,
-                "screen_height": 1440,
-                "screen_width": 2560,
+                "screen_height": screen_height,
+                "screen_width": screen_width,
                 "app_name": "chatgpt.com",
             },
             "paragen_cot_summary_display_override": "allow",
@@ -1365,7 +1500,7 @@ class OpenAIBackendAPI:
                     curl_options[CurlOpt.TIMEOUT_MS] = previous_total_timeout
                 else:
                     curl_options.pop(CurlOpt.TIMEOUT_MS, None)
-        ensure_ok(response, path)
+        self._ensure_image_conversation_ok(response, path, upstream_model)
         self._record_http_timing("image_generation_stream", response)
         return response
 
@@ -3642,6 +3777,7 @@ class OpenAIBackendAPI:
 
     def _bootstrap(self, timeout_secs: float = 30.0) -> None:
         """预热首页，并提取 PoW 相关脚本引用。"""
+        self._ensure_sentinel_environment()
         response = self.session.get(
             self.base_url + "/",
             headers=self._bootstrap_headers(),
@@ -3669,7 +3805,13 @@ class OpenAIBackendAPI:
             )
 
         base = "/backend-api/sentinel/chat-requirements" if self.access_token else "/backend-anon/sentinel/chat-requirements"
-        p_token = build_legacy_requirements_token(self.user_agent, self.pow_script_sources, self.pow_data_build)
+        environment, script_sources, data_build, user_agent = self._pow_inputs()
+        p_token = build_legacy_requirements_token(
+            user_agent,
+            script_sources,
+            data_build,
+            environment=environment,
+        )
 
         prepare_path = base + "/prepare"
         response = self.session.post(
@@ -3690,25 +3832,26 @@ class OpenAIBackendAPI:
             proof_token = build_proof_token(
                 proof_info.get("seed", ""),
                 proof_info.get("difficulty", ""),
-                self.user_agent,
-                script_sources=self.pow_script_sources,
-                data_build=self.pow_data_build,
+                user_agent,
+                script_sources=script_sources,
+                data_build=data_build,
+                environment=environment,
             )
 
         turnstile_token = ""
         turnstile_info = prepare_data.get("turnstile") or {}
-        if turnstile_info.get("required") and turnstile_info.get("dx"):
-            turnstile_token = solve_turnstile_token(turnstile_info["dx"], p_token) or ""
+        if turnstile_info.get("required"):
+            turnstile_token = solve_turnstile(str(turnstile_info.get("dx") or ""), p_token)
 
         finalize_path = base + "/finalize"
         response = self.session.post(
             self.base_url + finalize_path,
             headers=self._headers(finalize_path, {"Content-Type": "application/json"}),
-            json={
-                "prepare_token": prepare_data.get("prepare_token", ""),
-                "proof_token": proof_token,
-                "turnstile_token": turnstile_token,
-            },
+            json=chat_requirements_finalize_body(
+                str(prepare_data.get("prepare_token") or ""),
+                proof_token,
+                turnstile_token,
+            ),
             timeout=request_timeout(),
         )
         ensure_ok(response, "chat_requirements_finalize")

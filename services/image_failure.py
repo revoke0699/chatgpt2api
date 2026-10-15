@@ -69,6 +69,10 @@ FAILURE_POLICIES: dict[str, FailurePolicy] = {
         "transient", None, False, 502, "server_error",
         verify_account=True,
     ),
+    "image_model_not_found": FailurePolicy(
+        "transient", "image_generation", True, 404, "server_error",
+        verify_account=False,
+    ),
     "conversation_not_ready": FailurePolicy(
         "transient", "image_generation", True, 409, "server_error",
     ),
@@ -209,6 +213,39 @@ def is_text_review_failure_code(value: Any) -> bool:
     normalized = str(value or "").strip().lower()
     normalized = FAILURE_CODE_ALIASES.get(normalized, normalized)
     return normalized in TEXT_REVIEW_FAILURE_CODES
+
+
+MODEL_NOT_FOUND_DETAIL = "Model not found"
+_AUTO_IMAGE_CONVERSATION_PATHS = frozenset({
+    "/backend-api/f/conversation",
+    "/backend-api/f/conversation/prepare",
+})
+
+
+def auto_image_model_not_found_failure(
+    exc: UpstreamHTTPError,
+    *,
+    upstream_model: str,
+) -> ImageFailure | None:
+    """Only an actual auto image session's exact 404 uses the account switch.
+
+    Other 404s, other models, and other paths keep the generic classifier.
+    """
+    if str(upstream_model or "") != "auto":
+        return None
+    context = str(exc.context or "").split("?", 1)[0].rstrip("/")
+    if context not in _AUTO_IMAGE_CONVERSATION_PATHS:
+        return None
+    if int(exc.status_code) != 404:
+        return None
+    body = exc.body
+    if not isinstance(body, Mapping) or body.get("detail") != MODEL_NOT_FOUND_DETAIL:
+        return None
+    return image_failure(
+        "image_model_not_found",
+        retry_after=exc.retry_after,
+        raw_detail=body,
+    )
 
 
 def image_failure(
