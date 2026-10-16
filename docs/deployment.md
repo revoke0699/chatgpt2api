@@ -7,7 +7,7 @@
 ## Docker 部署
 
 ```bash
-git clone https://github.com/yukkcat/chatgpt2api.git
+git clone https://github.com/revoke0699/chatgpt2api.git
 cd chatgpt2api
 cp .env.example .env
 # 将 .env 中的 CHATGPT2API_AUTH_KEY=your_secret_key_here 替换为私有密钥。
@@ -62,7 +62,7 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml logs -f post
 也可以使用仓库安装脚本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/main/deploy/install.sh | sudo bash
 ```
 
 安装脚本会明确询问 Application Database：
@@ -78,7 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/ins
 后端：
 
 ```bash
-git clone https://github.com/yukkcat/chatgpt2api.git
+git clone https://github.com/revoke0699/chatgpt2api.git
 cd chatgpt2api
 uv sync
 uv run main.py

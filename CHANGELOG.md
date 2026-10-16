@@ -3,6 +3,7 @@
 ## Unreleased
 
 + [新增] 账号导入支持 RT 发货文本。一行格式为「账号----GPT密码----邮箱密码----refreshToken」；系统用 RT 换取 AT，保存账号、GPT 密码和 RT，邮箱密码不入库。这批账号之后刷新 AT 时携带对应的 iOS redirect_uri。
++ [优化] 项目默认代码库改为 [revoke0699/chatgpt2api](https://github.com/revoke0699/chatgpt2api)。克隆地址、安装脚本、控制台仓库链接和版本检查都指向该仓库。
 + [修复] 图片 Sentinel 握手改为当前网页的 25 字段 requirements、FNV-1a proof（结果带 `~S`）以及真实 Chromium Turnstile。`/chat-requirements/finalize` 提交 `prepare_token`、`proofofwork` 和 `turnstile`。实际 auto 图片会话返回 HTTP 404 且 JSON `detail` 精确为 `Model not found` 时，在原有账号重试次数内更换账号，并把该账号本地冷却 10 分钟；不改额度、不标记封禁、不扣代理健康，其他 404 仍走原分类。
 
 ## 3.2.3 - 2026-09-09

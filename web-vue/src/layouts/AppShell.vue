@@ -35,7 +35,7 @@
         <div class="flex h-16 items-center px-5 pt-4 lg:h-20 lg:pt-5">
           <div class="flex min-w-0 items-center">
             <a
-              href="https://github.com/yukkcat/chatgpt2api"
+              href="https://github.com/revoke0699/chatgpt2api"
               target="_blank"
               rel="noopener noreferrer"
               class="shell-sidebar-brand shrink-0 text-foreground transition-colors hover:text-primary"
@@ -1031,7 +1031,7 @@ const routeProgressDelayMs = 140
 const routeProgressFinishMs = 140
 let routeProgressDelayTimer: number | null = null
 let routeProgressFinishTimer: number | null = null
-const defaultReleasePageUrl = 'https://github.com/yukkcat/chatgpt2api/releases'
+const defaultReleasePageUrl = 'https://github.com/revoke0699/chatgpt2api/releases'
 const releasePageUrl = computed(() => updateStatus.value?.release_url || defaultReleasePageUrl)
 const updateCheckingMessage = '正在检查云端版本...'
 const updateTaskPollIntervalMs = 1000

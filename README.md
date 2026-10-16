@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yukkcat/chatgpt2api/releases/tag/v3.2.3">v3.2.3 Release</a>
+  <a href="https://github.com/revoke0699/chatgpt2api/releases/tag/v3.2.3">v3.2.3 Release</a>
   · <a href="./CHANGELOG.md">更新说明</a>
   · <a href="./docs/README.md">维护文档</a>
 </p>
@@ -59,7 +59,7 @@
 ### 一键安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/main/deploy/install.sh | sudo bash
 ```
 
 安装时可选择 SQLite、本地 PostgreSQL 18 容器或已有 PostgreSQL URL。SQLite 无需额外配置；本地 PostgreSQL 由 Compose 自动启动并持久化。
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/ins
 固定安装 `v3.2.3`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/v3.2.3/deploy/install.sh | sudo bash -s -- --branch v3.2.3
+curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/v3.2.3/deploy/install.sh | sudo bash -s -- --branch v3.2.3
 ```
 
 ### Docker Compose
@@ -75,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/v3.2.3/deploy/i
 默认使用 SQLite：
 
 ```bash
-git clone https://github.com/yukkcat/chatgpt2api.git
+git clone https://github.com/revoke0699/chatgpt2api.git
 cd chatgpt2api
 cp .env.example .env
 # 编辑 .env，为 CHATGPT2API_AUTH_KEY 设置私有密钥
@@ -255,8 +255,8 @@ npm run dev
 
 ## 本项目贡献者
 
-<a href="https://github.com/yukkcat/chatgpt2api/graphs/contributors">
-  <img alt="ChatGPT2API Contributors" src="https://contrib.rocks/image?repo=yukkcat/chatgpt2api" />
+<a href="https://github.com/revoke0699/chatgpt2api/graphs/contributors">
+  <img alt="ChatGPT2API Contributors" src="https://contrib.rocks/image?repo=revoke0699/chatgpt2api" />
 </a>
 
 ## 原版项目与贡献者

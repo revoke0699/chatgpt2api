@@ -17,9 +17,9 @@ from utils.container_runtime import is_containerized as _in_docker
 from utils.log import logger
 
 
-GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/yukkcat/chatgpt2api/releases/latest"
-GITHUB_RELEASES_URL = "https://github.com/yukkcat/chatgpt2api/releases"
-GITHUB_CHANGELOG_URL = "https://api.github.com/repos/yukkcat/chatgpt2api/contents/CHANGELOG.md?ref=main"
+GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/revoke0699/chatgpt2api/releases/latest"
+GITHUB_RELEASES_URL = "https://github.com/revoke0699/chatgpt2api/releases"
+GITHUB_CHANGELOG_URL = "https://api.github.com/repos/revoke0699/chatgpt2api/contents/CHANGELOG.md?ref=main"
 UPDATE_CHECK_TIMEOUT_SECS = 8
 UPDATE_CHECK_MAX_BYTES = 256 * 1024
 UPDATE_CHECK_CHUNK_BYTES = 64 * 1024

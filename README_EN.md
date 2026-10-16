@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yukkcat/chatgpt2api/releases/tag/v3.2.3">v3.2.3 Release</a>
+  <a href="https://github.com/revoke0699/chatgpt2api/releases/tag/v3.2.3">v3.2.3 Release</a>
   · <a href="./CHANGELOG.md">Changelog</a>
   · <a href="./docs/README.md">Documentation</a>
 </p>
@@ -40,7 +40,7 @@
 ### One-click installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/main/deploy/install.sh | sudo bash
 ```
 
 The installer lets you choose SQLite, a local PostgreSQL 18 container, or an existing PostgreSQL URL. SQLite requires no additional service. Local PostgreSQL is started and persisted automatically through Compose.
@@ -48,7 +48,7 @@ The installer lets you choose SQLite, a local PostgreSQL 18 container, or an exi
 To install the fixed `v3.2.3` release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/v3.2.3/deploy/install.sh | sudo bash -s -- --branch v3.2.3
+curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/v3.2.3/deploy/install.sh | sudo bash -s -- --branch v3.2.3
 ```
 
 ### Docker Compose
@@ -56,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/v3.2.3/deploy/i
 SQLite is used by default:
 
 ```bash
-git clone https://github.com/yukkcat/chatgpt2api.git
+git clone https://github.com/revoke0699/chatgpt2api.git
 cd chatgpt2api
 cp .env.example .env
 # Edit .env and set a private CHATGPT2API_AUTH_KEY
@@ -240,8 +240,8 @@ Code derived from [basketikun/chatgpt2api](https://github.com/basketikun/chatgpt
 
 ## Project Contributors
 
-<a href="https://github.com/yukkcat/chatgpt2api/graphs/contributors">
-  <img alt="ChatGPT2API Contributors" src="https://contrib.rocks/image?repo=yukkcat/chatgpt2api" />
+<a href="https://github.com/revoke0699/chatgpt2api/graphs/contributors">
+  <img alt="ChatGPT2API Contributors" src="https://contrib.rocks/image?repo=revoke0699/chatgpt2api" />
 </a>
 
 ## Original Project and Contributors

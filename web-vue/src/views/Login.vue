@@ -36,7 +36,7 @@
 
         <div class="mt-8 flex items-center justify-center gap-4 text-xs text-muted-foreground">
           <a
-            href="https://github.com/yukkcat/chatgpt2api"
+            href="https://github.com/revoke0699/chatgpt2api"
             target="_blank"
             rel="noopener noreferrer"
             class="inline-flex items-center gap-2 transition-colors hover:text-foreground"

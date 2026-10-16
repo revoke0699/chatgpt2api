@@ -32,7 +32,7 @@ usage() {
   printf '%s\n' "$(text usage_usage)"
   cat <<'EOF'
   bash deploy/install.sh
-  curl -fsSL https://raw.githubusercontent.com/yukkcat/chatgpt2api/main/deploy/install.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/revoke0699/chatgpt2api/main/deploy/install.sh | sudo bash
 EOF
 
   printf '\n%s\n' "$(text usage_env)"
