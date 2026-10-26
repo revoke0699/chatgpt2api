@@ -1,20 +1,39 @@
 """Call the private Chromium sentinel solver.
 
-The solver receives only the challenge fields. Account tokens, cookies, and
-user prompts stay in this process. A missing solver is an error when Turnstile
-is required; the old in-process VM is not a fallback.
+The current image handshake uses the local SHA3 proof and Turnstile VM.
+This client stays available for the solver process, and it no longer shares
+a fingerprint type with ``utils.pow``.
 """
 from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from curl_cffi import requests
 
 from services.config import config
 from utils.log import logger
-from utils.pow import SentinelEnvironment
+
+
+@dataclass(frozen=True)
+class SentinelEnvironment:
+    user_agent: str
+    gmt: str
+    timezone_name: str
+    language: str
+    languages: str
+    screen_sum: int
+    screen_width: int
+    screen_height: int
+    heap_limit: int
+    hardware_concurrency: int
+    script_sources: tuple[str, ...] = ()
+    data_build: str = ""
+    timezone: str = ""
+    timezone_offset_min: int = 0
+    from_solver: bool = False
 
 SOLVER_TIMEOUT_SECONDS = 30
 PROFILE_CACHE_SECONDS = 60
