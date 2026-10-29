@@ -43,6 +43,7 @@
 ## 版本与文档
 
 - GitHub 发布 workflow 的 push 触发器只监听 `v*` 标签；不得因 `main` 推送启动。`pull_request` 只用于验证。`workflow_dispatch` 可以验证，也可以推送非发布镜像。Release、`latest` 和 semver 镜像标签必须显式限制为 `v*` 标签。手动 ARM 镜像只使用默认分支上的 `arm64` 以及每次构建的 `sha-*`，不得覆盖 `latest` 或版本标签。
+- 向 `chatgpt2api` 的 `origin` 默认分支推送提交成功后，必须立刻对 `.github/workflows/docker-publish.yml` 执行 `workflow_dispatch`，ref 为该默认分支。该动作发布 `ghcr.io/<repository_owner>/chatgpt2api:arm64` 与对应的 `sha-*`。用户在同一次推送授权里明确说不发布镜像时不触发。不得因此创建 `v*` 标签或 GitHub Release。
 - 用户可感知的功能、Interface 或行为变化更新 `CHANGELOG.md` 的 Unreleased；纯内部重构无需逐条记录。
 - 同一版本的 `CHANGELOG.md` 条目必须按 `[新增]`、`[优化]`、`[修复]` 的顺序分组，同类条目保持连续，不得交叉排列。
 - 当前文档只描述已验证行为。删除路由或功能时，同一修改删除对应的 current 文档内容。
