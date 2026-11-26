@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>整理 RT 发货文本</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f0f0f;
+      --card: #1a1a1a;
+      --text: #f5f5f5;
+      --muted: #b3b3b3;
+      --border: #454545;
+      --ok: #8ee0b5;
+      --warn: #f0d48a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 28px 16px 48px;
+    }
+    h1 { margin: 0 0 8px; font-size: 22px; font-weight: 650; }
+    p { margin: 0; color: var(--muted); }
+    .note { margin-top: 8px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+    section {
+      margin-top: 18px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    label { display: block; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+    textarea {
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #111;
+      color: var(--text);
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    textarea:focus { outline: 2px solid #f5f5f5; outline-offset: 1px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    button, .file {
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #2a2a2a;
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button.primary { background: #f5f5f5; color: #141414; border-color: #f5f5f5; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button:focus-visible, .file:focus-within { outline: 2px solid #f5f5f5; outline-offset: 1px; }
+    .file input { display: none; }
+    .stats { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; font-size: 14px; }
+    .stats strong { font-weight: 650; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>整理 RT 发货文本</h1>
+    <p>把不同导出整理成控制台「导入 RT 发货文本」要的一行四段：<code>账号----GPT密码----邮箱密码----refreshToken</code></p>
+    <p class="note">样例 <code>账号----密码----AT----RT</code> 会保留第三段 Access Token。导入时用它里面的 client_id 换票。邮箱密码留空。文本只在这个页面里处理，不会上传。</p>
+
+    <section>
+      <label for="source">原始文本</label>
+      <textarea id="source" spellcheck="false" autocomplete="off" placeholder="粘贴导出的文本，或选择 TXT 文件"></textarea>
+      <div class="row">
+        <label class="file">选择 TXT<input id="file" type="file" accept=".txt,.text,.log,.csv,text/plain"></label>
+        <button id="clear" type="button">清空</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="stats" id="stats"></div>
+      <label for="output">可导入文本</label>
+      <textarea id="output" readonly spellcheck="false" autocomplete="off"></textarea>
+      <div class="row">
+        <button id="copy" class="primary" type="button" disabled>复制</button>
+        <button id="download" type="button" disabled>下载 TXT</button>
+      </div>
+      <ul id="problems" class="hidden"></ul>
+    </section>
+  </main>
+  <script>
+    function isJwt(value) {
+      return /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
+    }
+
+    function isOpaqueToken(value) {
+      return value.length >= 24 && /^[A-Za-z0-9._-]+$/.test(value) && !isJwt(value) && !value.includes("@");
+    }
+
+    function isAccount(value) {
+      return value.length > 0 && value.length <= 200 && !/\s/.test(value) && !/[\u4e00-\u9fff]/.test(value) && value.includes("@");
+    }
+
+    function splitFields(line) {
+      let parts;
+      if (line.includes("----")) parts = line.split("----");
+      else if (line.includes("|||")) parts = line.split("|||");
+      else if (line.includes("\t")) parts = line.split("\t");
+      else if (line.includes("|") || line.includes("｜")) parts = line.split(/\||｜/);
+      else parts = [line];
+      return parts.map((part) => part.trim()).filter(Boolean);
+    }
+
+    function rtValue(part) {
+      const matched = part.match(/rt[._][A-Za-z0-9._-]{8,}/);
+      if (matched) return matched[0];
+      return isOpaqueToken(part) ? part : "";
+    }
+
+    function parseDeliveryLine(line) {
+      const parts = splitFields(line);
+      let rtIndex = parts.findIndex((part) => /rt[._][A-Za-z0-9._-]{8,}/.test(part));
+      if (rtIndex < 0) {
+        for (let index = parts.length - 1; index >= 0; index -= 1) {
+          if (isOpaqueToken(parts[index])) {
+            rtIndex = index;
+            break;
+          }
+        }
+      }
+      if (rtIndex < 0) {
+        if (/[\u4e00-\u9fff]/.test(line) && !line.includes("@") && !/rt[._]/.test(line)) {
+          return { skip: "说明文字" };
+        }
+        return { skip: "没有 refresh token" };
+      }
+
+      const rt = rtValue(parts[rtIndex]);
+      if (!rt) return { skip: "没有 refresh token" };
+
+      const creds = [];
+      let accessToken = "";
+      parts.forEach((part, index) => {
+        if (index === rtIndex) return;
+        if (isJwt(part)) {
+          accessToken = part;
+          return;
+        }
+        creds.push(part);
+      });
+      if (!creds.length || !isAccount(creds[0])) return { skip: "没有账号" };
+      const password = creds[1] || "";
+      const mailbox = accessToken || creds[2] || "";
+      if ([creds[0], password, mailbox].some((part) => part.includes("----"))) return { skip: "字段里含有 ----" };
+
+      return {
+        account: creds[0],
+        password,
+        mailbox,
+        extra: creds.length > 3,
+        rt,
+        droppedAt: Boolean(accessToken),
+      };
+    }
+
+    function normalizeRtDelivery(text) {
+      const raw = String(text || "").replace(/^\uFEFF/, "");
+      if (raw.length > 1000000) {
+        return { error: "文本超过 100 万字符", output: "", rows: [], skipped: [], atDropped: 0 };
+      }
+      const rows = [];
+      const skipped = [];
+      const seen = new Set();
+      let atDropped = 0;
+      raw.split(/\r?\n/).forEach((rawLine, index) => {
+        const lineNumber = index + 1;
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) return;
+        const parsed = parseDeliveryLine(line);
+        if (parsed.skip) {
+          skipped.push({ lineNumber, reason: parsed.skip });
+          return;
+        }
+        if (seen.has(parsed.rt)) {
+          skipped.push({ lineNumber, reason: "refresh token 与前面重复" });
+          return;
+        }
+        seen.add(parsed.rt);
+        if (parsed.droppedAt) atDropped += 1;
+        rows.push({ lineNumber, account: parsed.account, password: parsed.password, mailbox: parsed.mailbox, rt: parsed.rt, extra: parsed.extra });
+      });
+      const output = rows.map((row) => [row.account, row.password, row.mailbox, row.rt].join("----")).join("\n");
+      const warnings = [];
+      if (rows.length > 2000) warnings.push("超过 2000 行。控制台一次最多导入 2000 行，请拆开后再贴。");
+      rows.filter((row) => row.extra).forEach((row) => {
+        warnings.push("第 " + row.lineNumber + " 行有多余字段，只保留账号、两段密码和 RT");
+      });
+      return { error: "", output, rows, skipped, atDropped, warnings };
+    }
+
+    if (typeof document === "undefined") {
+      /* Node tests call normalizeRtDelivery directly. */
+    } else {
+    const source = document.querySelector("#source");
+    const output = document.querySelector("#output");
+    const stats = document.querySelector("#stats");
+    const problems = document.querySelector("#problems");
+    const copyButton = document.querySelector("#copy");
+    const downloadButton = document.querySelector("#download");
+
+    function render(result) {
+      output.value = result.output;
+      const ready = Boolean(result.output);
+      copyButton.disabled = !ready;
+      downloadButton.disabled = !ready;
+      if (result.error) {
+        stats.innerHTML = '<span class="warn">' + result.error + "</span>";
+      } else if (!source.value.trim()) {
+        stats.textContent = "粘贴或选择文件后，这里会显示可导入行数。";
+      } else {
+        stats.innerHTML = [
+          '<span class="ok">可导入 <strong>' + result.rows.length + "</strong> 行</span>",
+          "<span>保留 AT <strong>" + result.atDropped + "</strong> 行</span>",
+          '<span class="warn">跳过 <strong>' + result.skipped.length + "</strong> 行</span>",
+        ].join("");
+      }
+      const items = result.error ? [] : [...result.warnings, ...result.skipped.map((item) => "第 " + item.lineNumber + " 行：" + item.reason)];
+      problems.classList.toggle("hidden", items.length === 0);
+      problems.replaceChildren(...items.slice(0, 30).map((text) => {
+        const li = document.createElement("li");
+        li.textContent = text;
+        return li;
+      }));
+      if (items.length > 30) {
+        const li = document.createElement("li");
+        li.textContent = "还有 " + (items.length - 30) + " 条";
+        problems.append(li);
+      }
+    }
+
+    function refresh() {
+      render(normalizeRtDelivery(source.value));
+    }
+
+    source.addEventListener("input", refresh);
+    document.querySelector("#clear").addEventListener("click", () => {
+      source.value = "";
+      refresh();
+      source.focus();
+    });
+    document.querySelector("#file").addEventListener("change", (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        source.value = String(reader.result || "");
+        refresh();
+      };
+      reader.readAsText(file);
+    });
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(output.value);
+      } catch (error) {
+        output.focus();
+        output.select();
+        document.execCommand("copy");
+      }
+      copyButton.textContent = "已复制";
+      setTimeout(() => { copyButton.textContent = "复制"; }, 1200);
+    });
+    downloadButton.addEventListener("click", () => {
+      const blob = new Blob([output.value + "\n"], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "rt-delivery-import.txt";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+    refresh();
+    }
+  </script>
+</body>
+</html>

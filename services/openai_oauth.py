@@ -8,6 +8,8 @@ platform_base = "https://platform.openai.com"
 platform_oauth_client_id = "app_2SKx67EdpoN0G6j64rFvigXD"
 platform_oauth_redirect_uri = f"{platform_base}/auth/callback"
 chatgpt_ios_oauth_redirect_uri = "com.openai.chat://auth0.openai.com/ios/com.openai.chat/callback"
+chatgpt_web_oauth_client_id = "app_EMoamEEZ73f0CkXaXp7hrann"
+chatgpt_web_oauth_redirect_uri = "https://chatgpt.com/api/auth/callback"
 platform_oauth_audience = "https://api.openai.com/v1"
 platform_auth0_client = "eyJuYW1lIjoiYXV0aDAtc3BhLWpzIiwidmVyc2lvbiI6IjEuMjEuMCJ9"
 
@@ -22,6 +24,22 @@ sec_ch_ua_full_version_list = (
     '"Google Chrome";v="142.0.0.0", '
     '"Not_A Brand";v="99.0.0.0"'
 )
+
+def delivery_oauth_target(client_id: str) -> tuple[str, str]:
+    """Pick the refresh client and redirect for one delivery-line client id.
+
+    ChatGPT web tokens name ``app_EMoamEEZ73f0CkXaXp7hrann`` and must use that
+    client's callback. Lines without a client id keep the iOS delivery client.
+    Any other embedded client id is sent without a mismatched redirect.
+    """
+
+    client = str(client_id or "").strip()
+    if client == chatgpt_web_oauth_client_id:
+        return chatgpt_web_oauth_client_id, chatgpt_web_oauth_redirect_uri
+    if client and client != platform_oauth_client_id:
+        return client, ""
+    return platform_oauth_client_id, chatgpt_ios_oauth_redirect_uri
+
 
 def oauth_refresh_request(
     refresh_token: str,

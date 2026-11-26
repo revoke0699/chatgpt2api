@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
+from services.account_credentials import decode_access_token_payload
 from utils.diagnostics import sanitize_diagnostic_text
 
 
 _SEPARATOR = "----"
 _MAX_CHARS = 1_000_000
 _MAX_LINES = 2000
+_CLIENT_ID = re.compile(r"^app_[A-Za-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,19 @@ class RefreshDeliveryRow:
     email: str
     password: str
     refresh_token: str
+    client_id: str = ""
+
+
+def client_id_from_access_token(access_token: str) -> str:
+    """Read the OAuth client id claim from an access token, if it is present."""
+
+    token = str(access_token or "").strip()
+    if token.count(".") != 2 or not token.startswith("eyJ"):
+        return ""
+    client_id = str(decode_access_token_payload(token).get("client_id") or "").strip()
+    if not _CLIENT_ID.fullmatch(client_id):
+        return ""
+    return client_id
 
 
 def parse_refresh_token_delivery(
@@ -25,7 +41,9 @@ def parse_refresh_token_delivery(
 ) -> tuple[list[RefreshDeliveryRow], list[dict[str, str]]]:
     """Split `账号----GPT密码----邮箱密码----refreshToken` lines.
 
-    The mailbox password is discarded. Blank lines and `#` comments are ignored.
+    The mailbox password is discarded. A JWT in the third field is an access
+    token: its client_id is kept so the refresh uses that OAuth client.
+    Blank lines and `#` comments are ignored.
     """
 
     raw = str(text or "")
@@ -54,6 +72,7 @@ def parse_refresh_token_delivery(
             )
             continue
         refresh_token = parts[3]
+        client_id = client_id_from_access_token(parts[2])
         if refresh_token in seen_tokens:
             errors.append(
                 {
@@ -70,6 +89,7 @@ def parse_refresh_token_delivery(
                 email=parts[0],
                 password=parts[1],
                 refresh_token=refresh_token,
+                client_id=client_id,
             )
         )
     return rows, errors
@@ -100,6 +120,8 @@ def build_refresh_token_delivery_accounts(
     redirect_uri: str,
     target_group_id: str | None = None,
 ) -> list[dict[str, str]]:
+    from services.openai_oauth import delivery_oauth_target
+
     payloads: list[dict[str, str]] = []
     for row in rows:
         token_data = exchanged_by_line.get(row.line_number)
@@ -109,13 +131,19 @@ def build_refresh_token_delivery_accounts(
         refresh_token = str(token_data.get("refresh_token") or row.refresh_token).strip()
         if not access_token or not refresh_token:
             continue
+        if row.client_id:
+            client_id, row_redirect = delivery_oauth_target(row.client_id)
+        else:
+            client_id, row_redirect = "", redirect_uri
         payload = {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "email": row.email,
-            "oauth_redirect_uri": redirect_uri,
+            "oauth_redirect_uri": row_redirect,
             "source_type": "web",
         }
+        if client_id:
+            payload["oauth_client_id"] = client_id
         identity_token = str(token_data.get("id_token") or "").strip()
         if identity_token:
             payload["id_token"] = identity_token

@@ -1022,6 +1022,11 @@ class AccountService:
             normalized["oauth_redirect_uri"] = oauth_redirect_uri
         else:
             normalized.pop("oauth_redirect_uri", None)
+        oauth_client_id = str(normalized.get("oauth_client_id") or "").strip()
+        if oauth_client_id:
+            normalized["oauth_client_id"] = oauth_client_id
+        else:
+            normalized.pop("oauth_client_id", None)
         normalized["user_id"] = normalized.get("user_id") or None
         normalized["proxy"] = str(normalized.get("proxy") or "").strip()
         source_type = normalized.get("source_type")
@@ -1325,10 +1330,11 @@ class AccountService:
         try:
             from services.openai_oauth import oauth_refresh_request
 
+            account_record = account or {}
             request_kwargs, content_type = oauth_refresh_request(
                 refresh_token,
-                client_id=self._OAUTH_CLIENT_ID,
-                redirect_uri=str((account or {}).get("oauth_redirect_uri") or ""),
+                client_id=str(account_record.get("oauth_client_id") or "").strip() or self._OAUTH_CLIENT_ID,
+                redirect_uri=str(account_record.get("oauth_redirect_uri") or ""),
             )
             with account_processing_slot():
                 response = session.post(
@@ -2736,7 +2742,11 @@ class AccountService:
     ) -> dict:
         """Exchange delivery-format refresh tokens, then save one account batch."""
 
-        from services.openai_oauth import chatgpt_ios_oauth_redirect_uri
+        from services.openai_oauth import (
+            chatgpt_ios_oauth_redirect_uri,
+            delivery_oauth_target,
+            platform_oauth_client_id,
+        )
         from services.refresh_token_delivery import (
             build_refresh_token_delivery_accounts,
             parse_refresh_token_delivery,
@@ -2758,9 +2768,13 @@ class AccountService:
 
         def exchange(row):
             try:
+                if row.client_id:
+                    client_id, redirect_uri = delivery_oauth_target(row.client_id)
+                else:
+                    client_id, redirect_uri = platform_oauth_client_id, chatgpt_ios_oauth_redirect_uri
                 token_data = self._request_access_token_refresh(
                     row.refresh_token,
-                    {"oauth_redirect_uri": chatgpt_ios_oauth_redirect_uri},
+                    {"oauth_client_id": client_id, "oauth_redirect_uri": redirect_uri},
                 )
             except Exception as exc:
                 return row, None, exc
@@ -5046,6 +5060,7 @@ class AccountService:
                     "refresh_token",
                     "id_token",
                     "password",
+                    "oauth_client_id",
                     "oauth_redirect_uri",
                     "type",
                     "plan_type",
@@ -5108,6 +5123,9 @@ class AccountService:
             password = str(account.get("password") or "").strip()
             if password:
                 item["password"] = password
+            oauth_client_id = str(account.get("oauth_client_id") or "").strip()
+            if oauth_client_id:
+                item["oauth_client_id"] = oauth_client_id
             oauth_redirect_uri = str(account.get("oauth_redirect_uri") or "").strip()
             if oauth_redirect_uri:
                 item["oauth_redirect_uri"] = oauth_redirect_uri
