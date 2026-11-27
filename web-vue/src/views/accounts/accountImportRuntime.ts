@@ -455,7 +455,7 @@ export function useAccountImportRuntime(options: AccountImportRuntimeOptions) {
     }
     const confirmed = await confirmDialog.ask({
       title: '导入 RT 发货文本',
-      message: `即将导入 ${total} 行。每行用给出的客户端 ID 把 RT 换成 AT，并保存账号、GPT 密码和 RT。2FA 密钥不会保存。是否继续？`,
+      message: `即将导入 ${total} 行。每行用给出的客户端 ID 把 RT 换成 AT，并保存账号、GPT 密码和 RT。同一邮箱或同一个 ChatGPT 账号会更新已有凭据，不另建账号。2FA 密钥不会保存。是否继续？`,
       confirmText: '确认导入',
       cancelText: '取消',
     })

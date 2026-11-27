@@ -7,6 +7,7 @@
 + [优化] 项目默认代码库改为 [revoke0699/chatgpt2api](https://github.com/revoke0699/chatgpt2api)。克隆地址、安装脚本、控制台仓库链接和版本检查都指向该仓库。
 + [优化] 手动触发的 linux/arm64 镜像在构建完成后推送到 GHCR。默认分支使用 `arm64`，每次构建另有 `sha-*`；不覆盖 `latest` 和版本标签。
 + [修复] RT 发货文本按第四段客户端 ID 换票，并在之后的刷新里继续使用。网页端 client 走 `https://chatgpt.com/api/auth/callback`，不再套用 iOS client。
++ [修复] 重复导入 RT 发货文本时，按邮箱和 access token 里的 ChatGPT account id 对齐已有账号并更新凭据，不再另建一条账号。邮箱相同但 ChatGPT account id 不同的两行仍各自保存。
 + [修复] 图片 Sentinel 握手退回上一版：SHA3 proof、本地 Turnstile，`/chat-requirements/finalize` 提交 `prepare_token`、`proof_token` 和 `turnstile_token`。25 字段 requirements、FNV-1a proof 和 Chromium Turnstile 不再使用。实际 auto 图片会话返回 HTTP 404 且 JSON `detail` 精确为 `Model not found` 时，在原有账号重试次数内更换账号，并把该账号本地冷却 10 分钟；不改额度、不标记封禁、不扣代理健康，其他 404 仍走原分类。
 
 ## 3.2.4 - 2026-11-06

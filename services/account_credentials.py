@@ -37,6 +37,14 @@ def decode_access_token_payload(access_token: str) -> dict[str, object]:
         return {}
 
 
+def chatgpt_account_id_from_access_token(access_token: str) -> str:
+    """Return the ChatGPT account id carried by an access token, if it has one."""
+    auth_claim = decode_access_token_payload(access_token).get("https://api.openai.com/auth")
+    if not isinstance(auth_claim, dict):
+        return ""
+    return str(auth_claim.get("chatgpt_account_id") or "").strip()
+
+
 def _positive_timestamp(claims: dict[str, object], name: str) -> int | None:
     try:
         value = int(claims.get(name) or 0)

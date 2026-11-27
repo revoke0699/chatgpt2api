@@ -16,6 +16,7 @@ from services.account_credentials import (
     ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
     access_token_expires_in_seconds,
     access_token_issued_at,
+    chatgpt_account_id_from_access_token,
     decode_access_token_payload,
     project_upstream_credential_availability,
 )
@@ -2707,6 +2708,7 @@ class AccountService:
         *,
         restore: bool = False,
         return_item_results: bool = False,
+        match_stable_identity: bool = False,
     ) -> dict:
         source_items = list(items)
         payloads: list[dict] = []
@@ -2723,6 +2725,7 @@ class AccountService:
             return_items=return_items,
             preserve_lifecycle=restore,
             return_item_results=return_item_results,
+            match_stable_identity=match_stable_identity,
         )
         if return_item_results:
             aligned_results = ["invalid"] * len(source_items)
@@ -2809,7 +2812,11 @@ class AccountService:
         added = 0
         skipped = 0
         if payloads:
-            saved = self.add_account_items(payloads, return_items=False)
+            saved = self.add_account_items(
+                payloads,
+                return_items=False,
+                match_stable_identity=True,
+            )
             added = int(saved.get("added") or 0)
             skipped = int(saved.get("skipped") or 0)
         return {
@@ -2836,6 +2843,7 @@ class AccountService:
         *,
         preserve_lifecycle: bool = False,
         return_item_results: bool = False,
+        match_stable_identity: bool = False,
     ) -> dict:
         proxy_payload_indices = [
             index
@@ -2852,6 +2860,7 @@ class AccountService:
                 return_items=return_items,
                 preserve_lifecycle=preserve_lifecycle,
                 return_item_results=return_item_results,
+                match_stable_identity=match_stable_identity,
             )
 
         references = [
@@ -2874,9 +2883,81 @@ class AccountService:
                 return_items=return_items,
                 preserve_lifecycle=preserve_lifecycle,
                 return_item_results=return_item_results,
+                match_stable_identity=match_stable_identity,
             )
 
         return self._run_proxy_assignment_mutation(references, persist)
+
+    @staticmethod
+    def _delivery_email_key(value: object) -> str:
+        return str(value or "").strip().casefold()
+
+    @staticmethod
+    def _delivery_chatgpt_ids(account: dict) -> list[str]:
+        ids: list[str] = []
+        stored = str(account.get("account_id") or "").strip().casefold()
+        if stored:
+            ids.append(stored)
+        decoded = chatgpt_account_id_from_access_token(
+            str(account.get("access_token") or "")
+        ).casefold()
+        if decoded and decoded not in ids:
+            ids.append(decoded)
+        return ids
+
+    @classmethod
+    def _index_delivery_identity(
+        cls,
+        email_owners: dict[str, str],
+        chatgpt_owners: dict[str, str],
+        token: str,
+        account: dict,
+    ) -> None:
+        email = cls._delivery_email_key(account.get("email"))
+        if email:
+            email_owners[email] = token
+        for chatgpt_id in cls._delivery_chatgpt_ids(account):
+            chatgpt_owners[chatgpt_id] = token
+
+    @staticmethod
+    def _forget_delivery_identity(
+        email_owners: dict[str, str],
+        chatgpt_owners: dict[str, str],
+        token: str,
+    ) -> None:
+        for owners in (email_owners, chatgpt_owners):
+            for key, owner in list(owners.items()):
+                if owner == token:
+                    owners.pop(key, None)
+
+    def _matching_delivery_owner_locked(
+        self,
+        payload: dict,
+        access_token: str,
+        email_owners: dict[str, str],
+        chatgpt_owners: dict[str, str],
+    ) -> str:
+        """Find an existing account for one RT delivery payload.
+
+        ChatGPT account id wins. Email matches only when the two account ids
+        do not name different ChatGPT accounts.
+        """
+
+        email = self._delivery_email_key(payload.get("email"))
+        chatgpt_id = chatgpt_account_id_from_access_token(access_token).casefold()
+        if chatgpt_id:
+            owner = self._resolve_access_token_locked(chatgpt_owners.get(chatgpt_id, ""))
+            if owner in self._accounts and owner != access_token:
+                return owner
+        if not email:
+            return ""
+        owner = self._resolve_access_token_locked(email_owners.get(email, ""))
+        if owner not in self._accounts or owner == access_token:
+            return ""
+        existing_ids = set(self._delivery_chatgpt_ids(self._accounts[owner]))
+        if chatgpt_id and existing_ids and chatgpt_id not in existing_ids:
+            return ""
+        return owner
 
     def _add_account_payloads_impl(
         self,
@@ -2885,6 +2966,7 @@ class AccountService:
         *,
         preserve_lifecycle: bool = False,
         return_item_results: bool = False,
+        match_stable_identity: bool = False,
     ) -> dict:
         deduped: dict[str, dict] = {}
         input_tokens: list[str] = []
@@ -2925,6 +3007,16 @@ class AccountService:
                     token,
                 )
             }
+            email_owners: dict[str, str] = {}
+            chatgpt_owners: dict[str, str] = {}
+            if match_stable_identity:
+                for token, account in self._accounts.items():
+                    self._index_delivery_identity(
+                        email_owners,
+                        chatgpt_owners,
+                        token,
+                        account,
+                    )
             for access_token, payload in deduped.items():
                 resolved_token = self._resolve_access_token_locked(access_token)
                 if resolved_token != access_token and resolved_token in self._accounts:
@@ -2933,6 +3025,16 @@ class AccountService:
                     outcomes_by_token[access_token] = "skipped"
                     continue
                 current = self._accounts.get(access_token)
+                replaced_token = ""
+                if current is None and match_stable_identity:
+                    replaced_token = self._matching_delivery_owner_locked(
+                        payload,
+                        access_token,
+                        email_owners,
+                        chatgpt_owners,
+                    )
+                    if replaced_token:
+                        current = self._accounts.get(replaced_token)
                 if current is None:
                     fingerprint = self._access_token_fingerprint(access_token)
                     if fingerprint in token_fingerprint_owners:
@@ -2960,13 +3062,16 @@ class AccountService:
                 merged["type"] = incoming_type or current_type
                 account = self._normalize_account(merged)
                 if account is not None:
+                    if replaced_token:
+                        self._accounts.pop(replaced_token, None)
                     previous_management_id = str(
                         current.get("management_id") or ""
                     ).strip().lower()
+                    identity_tokens = {access_token, replaced_token} - {""}
                     used_management_ids = {
                         management_id
                         for management_id, owner in management_id_owners.items()
-                        if owner != access_token
+                        if owner not in identity_tokens
                     }
                     account["management_id"] = self._unique_management_id(
                         access_token,
@@ -2977,12 +3082,38 @@ class AccountService:
                     if (
                         previous_management_id
                         and previous_management_id != account["management_id"]
-                        and management_id_owners.get(previous_management_id) == access_token
+                        and management_id_owners.get(previous_management_id) in identity_tokens
                     ):
                         management_id_owners.pop(previous_management_id, None)
                     management_id_owners[account["management_id"]] = access_token
                     for fingerprint in account["access_token_fingerprints"]:
                         token_fingerprint_owners[fingerprint] = access_token
+                    if match_stable_identity:
+                        if replaced_token:
+                            self._forget_delivery_identity(
+                                email_owners,
+                                chatgpt_owners,
+                                replaced_token,
+                            )
+                        self._forget_delivery_identity(
+                            email_owners,
+                            chatgpt_owners,
+                            access_token,
+                        )
+                        self._index_delivery_identity(
+                            email_owners,
+                            chatgpt_owners,
+                            access_token,
+                            account,
+                        )
+                    if replaced_token:
+                        alias_sources = {
+                            source
+                            for source in {replaced_token, *self._token_aliases}
+                            if self._resolve_access_token_locked(source) == replaced_token
+                        }
+                        self._token_aliases.pop(access_token, None)
+                        self._move_account_runtime_token_locked(access_token, alias_sources)
             conflict_existing_tokens: set[str] = set()
             self._save_accounts(
                 conflict_existing_tokens=conflict_existing_tokens,
