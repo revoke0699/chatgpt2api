@@ -2760,7 +2760,7 @@ class AccountService:
         secrets = tuple(
             value
             for row in rows
-            for value in (row.refresh_token, row.password)
+            for value in (row.refresh_token, row.password, row.totp_secret)
             if value
         )
         exchanged: dict[int, dict[str, str]] = {}

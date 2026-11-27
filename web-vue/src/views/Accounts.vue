@@ -679,13 +679,13 @@
                 <div v-else-if="importMode === 'refresh_token_delivery'" class="space-y-3">
                   <ImportModePanel
                     title="导入 RT 发货文本"
-                    description="一行一个，四段用 ---- 分隔：账号----GPT密码----邮箱密码----refreshToken。第三段如果是 Access Token，就用它里面的 client_id 换票。系统保存账号、GPT 密码和 RT，邮箱密码不会保存。"
+                    description="一行一个，五段用 ---- 分隔：账号----GPT密码----2FA密钥----客户端ID----refreshToken。换票使用这一行的客户端 ID。系统保存账号、GPT 密码和 RT，2FA 密钥不会保存。"
                   />
                   <textarea
                     v-model.trim="refreshTokenDeliveryText"
                     rows="10"
                     class="ui-textarea-sm font-mono"
-                    placeholder="账号----GPT密码----邮箱密码----refreshToken"
+                    placeholder="账号----GPT密码----2FA密钥----客户端ID----refreshToken"
                     autocomplete="off"
                     spellcheck="false"
                   ></textarea>

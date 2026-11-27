@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from services.account_credentials import decode_access_token_payload
 from utils.diagnostics import sanitize_diagnostic_text
 
 
@@ -22,28 +21,16 @@ class RefreshDeliveryRow:
     password: str
     refresh_token: str
     client_id: str = ""
-
-
-def client_id_from_access_token(access_token: str) -> str:
-    """Read the OAuth client id claim from an access token, if it is present."""
-
-    token = str(access_token or "").strip()
-    if token.count(".") != 2 or not token.startswith("eyJ"):
-        return ""
-    client_id = str(decode_access_token_payload(token).get("client_id") or "").strip()
-    if not _CLIENT_ID.fullmatch(client_id):
-        return ""
-    return client_id
+    totp_secret: str = ""
 
 
 def parse_refresh_token_delivery(
     text: str,
 ) -> tuple[list[RefreshDeliveryRow], list[dict[str, str]]]:
-    """Split `账号----GPT密码----邮箱密码----refreshToken` lines.
+    """Split `账号----GPT密码----2FA密钥----客户端ID----refreshToken` lines.
 
-    The mailbox password is discarded. A JWT in the third field is an access
-    token: its client_id is kept so the refresh uses that OAuth client.
-    Blank lines and `#` comments are ignored.
+    The 2FA secret is discarded. The client id selects the OAuth client used
+    to exchange the refresh token. Blank lines and `#` comments are ignored.
     """
 
     raw = str(text or "")
@@ -62,7 +49,7 @@ def parse_refresh_token_delivery(
         if data_lines > _MAX_LINES:
             raise ValueError("一次最多导入 2000 行")
         parts = [part.strip() for part in line.split(_SEPARATOR)]
-        if len(parts) != 4 or not parts[0] or not parts[3]:
+        if len(parts) != 5 or not parts[0] or not parts[4]:
             errors.append(
                 {
                     "id": f"line-{line_number}",
@@ -71,8 +58,17 @@ def parse_refresh_token_delivery(
                 }
             )
             continue
-        refresh_token = parts[3]
-        client_id = client_id_from_access_token(parts[2])
+        client_id = parts[3]
+        if not _CLIENT_ID.fullmatch(client_id):
+            errors.append(
+                {
+                    "id": parts[0],
+                    "code": "invalid_client_id",
+                    "message": f"第 {line_number} 行客户端 ID 不正确",
+                }
+            )
+            continue
+        refresh_token = parts[4]
         if refresh_token in seen_tokens:
             errors.append(
                 {
@@ -90,6 +86,7 @@ def parse_refresh_token_delivery(
                 password=parts[1],
                 refresh_token=refresh_token,
                 client_id=client_id,
+                totp_secret=parts[2],
             )
         )
     return rows, errors
